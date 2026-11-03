@@ -352,7 +352,7 @@ struct FieldDrawingLayer: View {
 
 /// Hit area for reshaping and moving fields: the field interiors plus a grab
 /// band along each outline, in root coordinates. Everything else falls through
-/// to the canvas below, so clicking empty space still creates a note.
+/// to the canvas below, so clicking empty space still reaches the canvas.
 private struct FieldHitShape: Shape {
     let fields: [Field]
     let scale: CGFloat

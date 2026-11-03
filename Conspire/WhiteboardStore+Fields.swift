@@ -182,6 +182,9 @@ extension WhiteboardStore {
         }
     }
 
+    /// Lands the drawn stroke. Every path that actually changes the board hands
+    /// the pencil back; a stroke too small to mean anything leaves it in place,
+    /// so a slip does not cost you the tool.
     func endFieldStroke() {
         let raw = fieldDraftStroke
         let carve = fieldDraftIsCarve
@@ -200,6 +203,7 @@ extension WhiteboardStore {
             carveFields(with: stroke)
             rebuildFieldMembership()
             registerFieldUndo(before, actionName: "Carve Field")
+            finishOneShotTool()
             return
         }
 
@@ -215,6 +219,7 @@ extension WhiteboardStore {
             rebuildFieldMembership()
             registerFieldUndo(before, actionName: "Extend Field")
             appendActionLog("field extended")
+            finishOneShotTool()
             return
         }
 
@@ -229,6 +234,7 @@ extension WhiteboardStore {
         rebuildFieldMembership()
         registerFieldUndo(before, actionName: "Draw Field")
         appendActionLog("field created")
+        finishOneShotTool()
     }
 
     /// Subtract the stroke from every field it touches, dropping any erased entirely.

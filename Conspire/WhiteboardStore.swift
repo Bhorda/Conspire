@@ -71,13 +71,25 @@ enum LinkVisibility: CaseIterable {
 
 /// Which tool the canvas is currently in — mutually exclusive.
 ///
-/// `.note` and `.string` are the "hand" modes: pointer interactions move notes,
-/// draw strings, and reshape existing fields. `.field` puts the pencil in your
-/// hand, and a drag anywhere on the canvas draws a zone instead.
+/// `.hand` is the resting state and the default: every interaction works
+/// except making new things, so a stray click can never leave a note behind.
+/// The rest are tools you pick up. `.note` and `.string` still move notes and
+/// reshape existing fields; `.field` puts the pencil in your hand, and a drag
+/// anywhere on the canvas draws a zone instead.
 enum PlacementMode: Sendable {
+    case hand
     case note
     case string
     case field
+
+    /// A one-shot tool hands itself back as soon as it has made something.
+    /// Strings get drawn in runs, so the string tool stays where you put it.
+    var returnsToHandAfterUse: Bool {
+        switch self {
+        case .note, .field: return true
+        case .hand, .string: return false
+        }
+    }
 }
 
 /// One row in the flat canvas + carry render list.
@@ -123,8 +135,7 @@ final class WhiteboardStore: ObservableObject {
     @Published var canvasScale: CGFloat = 1.0
     @Published var cursorInRoot: CGPoint = .zero
     @Published var noteColourPicked: Int = 0
-    @Published var placementMode: PlacementMode = .note
-    @Published var isNoteCreationLocked: Bool = false
+    @Published var placementMode: PlacementMode = .hand
     @Published var isAnimatingCycle: Bool = false
     @Published var activeBoardID: UUID?
     @Published var activeBoardName: String = ""
@@ -281,6 +292,49 @@ final class WhiteboardStore: ObservableObject {
         } else {
             hoveredGroupID = BoardLayout.hitGroup(world: world, groups: boardNoteGroups())
         }
+    }
+
+    /// Put the tools down. Nothing is destroyed and nothing is deselected —
+    /// only the ability to create goes away.
+    func enterHandMode() {
+        placementMode = .hand
+        cancelLinkDraft()
+    }
+
+    /// Called at the moment a tool has finished making something. The note and
+    /// field tools return to the hand here; the string tool stays.
+    func finishOneShotTool() {
+        guard placementMode.returnsToHandAfterUse else { return }
+        placementMode = .hand
+    }
+
+    /// Escape peels one layer at a time: abandon what is in progress, then let
+    /// go of what is selected, then put the tool down. Returns false when there
+    /// was nothing to dismiss, so the key can fall through to the responder
+    /// chain (a focused text field, the window).
+    func handleEscape() -> Bool {
+        if editingNoteID != nil {
+            stopEditing()
+            return true
+        }
+        if fieldGesture != nil || !fieldDraftStroke.isEmpty {
+            cancelFieldGesture()
+            return true
+        }
+        if linkDraftSource != nil {
+            cancelLinkDraft()
+            return true
+        }
+        if selectedFieldID != nil || selectedLinkID != nil {
+            selectField(nil)
+            selectLink(nil)
+            return true
+        }
+        if placementMode != .hand {
+            enterHandMode()
+            return true
+        }
+        return false
     }
 
     func pickNoteColour(_ index: Int) {
@@ -537,6 +591,9 @@ final class WhiteboardStore: ObservableObject {
         stopEditing()
 
         if wasEditing { return }
+        // Only the note tool creates from the canvas; the hand and the pencil
+        // have already done their work above (deselecting, ending editing).
+        guard placementMode == .note else { return }
         createNoteAndEdit(centeredAt: world)
     }
 
@@ -547,7 +604,7 @@ final class WhiteboardStore: ObservableObject {
 
     /// Left-click a board stack while not carrying: add a new note on top and start editing it.
     func createNoteOnTopOfBoardStack(groupID: UUID) {
-        guard !isNoteCreationLocked else { return }
+        guard placementMode == .note else { return }
         guard activeDragSession == nil else { return }
         guard carriedGroup == nil else { return }
         guard activeGroups.contains(where: { $0.id == groupID }) else { return }
@@ -555,6 +612,7 @@ final class WhiteboardStore: ObservableObject {
         if let noteID = persistence?.appendNoteOnTopOfGroup(groupID: groupID, colour: noteColourPicked) {
             editingNoteID = noteID
             appendActionLog("new note on stack \(groupID.uuidString.prefix(8))…")
+            finishOneShotTool()
         }
     }
 
@@ -1502,10 +1560,10 @@ final class WhiteboardStore: ObservableObject {
     }
 
     private func createNoteAndEdit(centeredAt worldCenter: CGPoint) {
-        guard !isNoteCreationLocked else { return }
         if let noteID = persistence?.createNote(atWorldCenter: worldCenter, colour: noteColourPicked) {
             editingNoteID = noteID
             appendActionLog("create note \(noteID.uuidString.prefix(8))…")
+            finishOneShotTool()
         }
     }
 

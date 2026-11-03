@@ -287,7 +287,9 @@ struct NoteCardView: View {
                 }
                 return
             }
-            if isBoardStackEntry {
+            // Adding to a stack is creation, so it belongs to the note tool.
+            // In the hand it is an ordinary click: stop editing, nothing more.
+            if isBoardStackEntry, store.placementMode == .note {
                 store.createNoteOnTopOfBoardStack(groupID: entry.groupID)
             } else {
                 store.stopEditing()

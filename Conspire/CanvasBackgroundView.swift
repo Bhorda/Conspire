@@ -7,7 +7,8 @@ import SwiftUI
 import AppKit
 
 
-/// Empty canvas: a click creates or places a note. Panning is scroll-driven
+/// Empty canvas: a click places notes you are carrying, and creates one only
+/// when the note tool is up — in the hand it just deselects. Panning is scroll-driven
 /// (`CanvasScrollPanMonitor`), so no drag gesture competes with notes or toolbar controls.
 struct CanvasBackgroundView: View {
     @ObservedObject var store: WhiteboardStore

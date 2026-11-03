@@ -74,26 +74,13 @@ final class CanvasKeyboardCycleHostView: NSView {
                 return nil
             }
 
-            // Escape unfocuses the note being edited, abandons a field gesture,
-            // or clears the field selection.
+            // Escape walks back out of whatever you are in the middle of, one
+            // press at a time, and finally puts the tool down. The store owns
+            // that order; this only forwards the key and reports whether it was
+            // used, so an unused Escape still reaches the responder chain.
             if event.keyCode == KeyCode.escape {
-                let handled = MainActor.assumeIsolated {
-                    store.editingNoteID != nil
-                        || store.fieldGesture != nil
-                        || !store.fieldDraftStroke.isEmpty
-                        || store.selectedFieldID != nil
-                }
-                guard handled else { return event }
-                Task { @MainActor in
-                    if store.editingNoteID != nil {
-                        store.stopEditing()
-                    } else if store.fieldGesture != nil || !store.fieldDraftStroke.isEmpty {
-                        store.cancelFieldGesture()
-                    } else {
-                        store.selectField(nil)
-                    }
-                }
-                return nil
+                let handled = MainActor.assumeIsolated { store.handleEscape() }
+                return handled ? nil : event
             }
 
             // 1/2/3 pick a note colour; ⌘1/2/3 a string colour; ⌥1/2/3 a field colour.

@@ -105,7 +105,7 @@ struct WhiteboardRootView: View {
         for link in store.links.values where store.path(for: link) != nil {
             drawable += 1
         }
-        let mode = store.placementMode == .string ? "STRING" : "note"
+        let mode = String(describing: store.placementMode)
         let draft = store.linkDraftSource == nil ? "none" : "ACTIVE"
         let vis = String(describing: store.stringVisibility)
         let notes = store.noteDrawEntries.count
@@ -361,26 +361,6 @@ struct WhiteboardRootView: View {
 //                                .padding(.vertical, 12)
 //                                .glassEffect()
 
-                            // HStack(spacing: 6) {
-                            Button {
-                                store.isNoteCreationLocked.toggle()
-                            } label: {
-                                Image(systemName: "lock.square")
-                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                    .foregroundStyle(
-                                        store.isNoteCreationLocked
-                                            ? Color.white
-                                            : Color.gray.opacity(0.45)
-                                    )
-                                    .frame(
-                                        width: WhiteboardStyle.toolbarChipHeight,
-                                        height: WhiteboardStyle.toolbarChipHeight
-                                    )
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .glassEffect(.regular.interactive(), in: .circle)
-
                             Spacer()
                         
                             
@@ -403,6 +383,35 @@ struct WhiteboardRootView: View {
 //                            .padding(.vertical, 12)
 //                            .glassEffect()
                             
+                            // The hand leads the row because it is where you
+                            // come back to: the note and field tools return
+                            // here once they have made something, and so does
+                            // Escape.
+                            Button {
+                                store.enterHandMode()
+                            } label: {
+                                Image(systemName: "hand.raised")
+                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
+                                    .symbolVariant(store.placementMode == .hand ? .fill : .none)
+                                    .contentTransition(.symbolEffect)
+                                    .foregroundStyle(
+                                        store.placementMode == .hand
+                                            ? Color.primary
+                                            : Color.secondary.opacity(0.5)
+                                    )
+                                    .padding(.horizontal, 14)
+                                    .frame(height: WhiteboardStyle.toolbarChipHeight)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Hand — move and adjust anything, create nothing (Esc)")
+                            .glassEffect()
+                            .overlay(alignment: .top) {
+                                if store.placementMode == .hand {
+                                    Circle().fill(Color.white).frame(width: 4, height: 4).offset(y: -6)
+                                }
+                            }
+
                             HStack(spacing: 10) {
                                 Button{
                                     store.pickNoteColour(0)
