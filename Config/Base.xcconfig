@@ -1,0 +1,8 @@
+// Base configuration for every target.
+//
+// Signing is kept out of the project file so the Apple Developer Team ID
+// stays local to each machine. Copy Signing.xcconfig.template to
+// Signing.xcconfig and fill in your own team, or leave it absent to build
+// unsigned - the include below is optional and will not fail.
+
+#include? "Signing.xcconfig"

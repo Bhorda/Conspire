@@ -1,0 +1,1190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conspire Fields</title>
+<style>
+  :root {
+    --paper: #FBFAF7;
+    --ink: #2B2A27;
+    --muted: #7A776F;
+    --hair: rgba(0,0,0,.12);
+    --chrome: rgba(255,255,255,.82);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; }
+  body {
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- canvas ---------- */
+  #viewport {
+    position:absolute; inset:0;
+    background-color: var(--paper);
+    background-image: radial-gradient(circle, rgba(0,0,0,.12) 1px, transparent 1.2px);
+    touch-action: none;
+    cursor: default;
+  }
+  #viewport.panning { cursor: grabbing; }
+  #viewport.drawing { cursor: crosshair; }
+  #viewport.edge    { cursor: ew-resize; }
+  #viewport.movable { cursor: move; }
+
+  #world { position:absolute; left:0; top:0; transform-origin: 0 0; }
+
+  /* Big fixed-extent SVG layers so world-space children are never clipped. */
+  .layer {
+    position:absolute; left:-20000px; top:-20000px;
+    width:40000px; height:40000px;
+    pointer-events:none;
+  }
+  #fieldLayer { isolation: isolate; }           /* so overlaps multiply with each other */
+  #fieldLayer path { mix-blend-mode: multiply; }
+
+  #noteLayer { position:absolute; left:0; top:0; }
+  #viewport.drawing #noteLayer { pointer-events:none; }
+
+  /* ---------- notes ---------- */
+  .note {
+    position:absolute; width:180px; min-height:140px;
+    background:#FFFABF;
+    border-radius:6px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 8px 18px -8px rgba(0,0,0,.28);
+    padding:10px 10px 22px;
+    cursor:grab;
+    user-select:none;
+    font-size:14px;
+  }
+  .note.dragging { cursor:grabbing; box-shadow: 0 3px 6px rgba(0,0,0,.18), 0 20px 34px -12px rgba(0,0,0,.34); }
+  .note.carried  { outline:2px solid rgba(0,0,0,.35); outline-offset:1px; }
+  .note .body { outline:none; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .note .body:focus { cursor:text; }
+  .note .chips {
+    position:absolute; left:8px; right:8px; bottom:6px;
+    display:flex; gap:4px; align-items:center; flex-wrap:wrap;
+    pointer-events:none;
+  }
+  .chip {
+    font-size:9px; line-height:1; letter-spacing:.02em;
+    padding:3px 5px; border-radius:999px;
+    color:#fff; opacity:.92; white-space:nowrap;
+    max-width:70px; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ---------- field labels ---------- */
+  .flabel {
+    position:absolute;
+    transform: translate(-50%, -100%);
+    font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+    padding:2px 6px; border-radius:4px;
+    color:#fff;
+    white-space:nowrap;
+    cursor:text;
+    user-select:none;
+  }
+  .flabel:focus { outline:2px solid rgba(0,0,0,.3); user-select:text; }
+  .flabel .count { opacity:.6; font-weight:500; margin-left:6px;
+                   padding-left:6px; border-left:1px solid rgba(255,255,255,.4); }
+
+  /* ---------- chrome ---------- */
+  #dock {
+    position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    max-width: calc(100% - 32px);
+  }
+  #toolbar {
+    display:flex; align-items:center; gap:8px;
+    flex-wrap:wrap; justify-content:center;
+    max-width:100%;
+    padding:8px;
+    background: var(--chrome);
+    backdrop-filter: blur(16px) saturate(1.6);
+    border:1px solid var(--hair);
+    border-radius:14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08), 0 18px 40px -16px rgba(0,0,0,.3);
+    user-select:none;
+  }
+  .group { display:flex; align-items:center; gap:4px; }
+  .sep { width:1px; height:26px; background:var(--hair); margin:0 2px; }
+  button.chip-btn {
+    height:36px; min-width:36px; padding:0 11px;
+    border:1px solid transparent; border-radius:9px;
+    background:transparent; color:var(--ink);
+    font:inherit; font-weight:500;
+    display:flex; align-items:center; gap:6px;
+    cursor:pointer;
+  }
+  button.chip-btn:hover { background:rgba(0,0,0,.055); }
+  button.chip-btn.on { background:var(--ink); color:#fff; }
+  button.chip-btn kbd {
+    font:inherit; font-size:10px; opacity:.55;
+    border:1px solid currentColor; border-radius:3px; padding:0 3px;
+  }
+  .swatch {
+    width:22px; height:22px; border-radius:50%;
+    border:2px solid transparent; cursor:pointer;
+  }
+  .swatch.on { border-color: var(--ink); }
+  label.slider { display:flex; flex-direction:column; gap:1px; font-size:9px; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:.05em; padding:0 2px; }
+  label.slider input { width:64px; margin:0; }
+
+  #hint {
+    font-size:11.5px; color:var(--muted);
+    background:rgba(251,250,247,.82); backdrop-filter:blur(6px);
+    padding:4px 10px; border-radius:7px;
+    text-align:center; pointer-events:none;
+  }
+  #hint b { color:var(--ink); font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <div id="world">
+    <svg class="layer" id="fieldLayer"><g id="fieldG"></g></svg>
+    <div id="noteLayer"></div>
+    <svg class="layer" id="toolLayer"><g id="toolG"></g></svg>
+  </div>
+</div>
+
+<div id="dock">
+<div id="hint"></div>
+
+<div id="toolbar">
+  <div class="group">
+    <button class="chip-btn" id="t-hand">Hand <kbd>V</kbd></button>
+    <button class="chip-btn" id="t-pencil">Pencil <kbd>B</kbd></button>
+  </div>
+  <div class="sep"></div>
+  <div class="group" id="swatches"></div>
+  <div class="sep"></div>
+  <div class="group">
+    <button class="chip-btn" id="m-clay">Clay</button>
+    <button class="chip-btn" id="m-handles">Handles</button>
+  </div>
+  <div class="sep"></div>
+  <label class="slider">Brush <input type="range" id="s-brush" min="40" max="420" step="10"></label>
+  <label class="slider">Join <input type="range" id="s-join" min="0" max="44" step="2"></label>
+  <label class="slider">Tidy <input type="range" id="s-tidy" min="0" max="6" step="1"></label>
+  <div class="sep"></div>
+  <div class="group">
+    <button class="chip-btn" id="b-undo">Undo <kbd>Z</kbd></button>
+    <button class="chip-btn" id="b-reset">Reset</button>
+  </div>
+</div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Conspire — field / zone interaction prototype
+
+   Shape model
+   -----------
+   A field is ONE closed outline, stored as a dense ring of points
+   (~RING_SPACING apart), rendered as a closed Catmull-Rom spline.
+   Dense + uniform is what makes falloff sculpting feel smooth.
+
+   All shape combining (union / carve / self-intersection repair)
+   goes through the same place: rasterise signed distance onto a
+   grid, blend with a smooth min, then march the 0 contour and keep
+   the largest loop. That gives organic joins, and dropping all but
+   the largest loop enforces "one outline, no holes" for free.
+   ============================================================ */
+
+const EPS = 1e-9;
+const RING_SPACING = 16;     // world px between ring points
+const MIN_FIELD_AREA = 1600; // ignore accidental dabs
+const EDGE_GRAB = 12;        // screen px to grab an outline
+
+const FIELD_COLOURS = [
+  { fill:'#F7CE72', edge:'#B9871B' },
+  { fill:'#86CEC8', edge:'#237F78' },
+  { fill:'#C8A3E6', edge:'#7747A8' },
+  { fill:'#A9DA86', edge:'#498A2F' },
+];
+const NOTE_COLOURS = ['#FFFABF', '#BFFAF7', '#FABFFF'];
+
+/* ---------------- vector helpers ---------------- */
+const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+
+function closedLength(p) {
+  let t = 0;
+  for (let i = 0; i < p.length; i++) t += dist(p[i], p[(i+1) % p.length]);
+  return t;
+}
+function polyArea(p) {
+  let s = 0;
+  for (let i = 0, j = p.length-1; i < p.length; j = i++) s += p[j].x*p[i].y - p[i].x*p[j].y;
+  return s / 2;
+}
+function bounds(p) {
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  for (const q of p) { if(q.x<x0)x0=q.x; if(q.y<y0)y0=q.y; if(q.x>x1)x1=q.x; if(q.y>y1)y1=q.y; }
+  return {x0,y0,x1,y1};
+}
+function centroid(p) {
+  let x=0, y=0;
+  for (const q of p) { x+=q.x; y+=q.y; }
+  return { x:x/p.length, y:y/p.length };
+}
+function pointInPoly(p, pt) {
+  let inside = false;
+  for (let i = 0, j = p.length-1; i < p.length; j = i++) {
+    const a = p[j], b = p[i];
+    if ((b.y > pt.y) !== (a.y > pt.y) &&
+        pt.x < (a.x-b.x) * (pt.y-b.y) / (a.y-b.y) + b.x) inside = !inside;
+  }
+  return inside;
+}
+function nearestOnRing(ring, pt) {
+  let best = { d: Infinity, i: 0, t: 0, point: ring[0] };
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i+1) % ring.length];
+    const vx = b.x-a.x, vy = b.y-a.y, len2 = vx*vx + vy*vy;
+    let t = len2 > EPS ? ((pt.x-a.x)*vx + (pt.y-a.y)*vy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = a.x + vx*t, qy = a.y + vy*t;
+    const d = Math.hypot(pt.x-qx, pt.y-qy);
+    if (d < best.d) best = { d, i, t, point:{ x:qx, y:qy } };
+  }
+  return best;
+}
+
+/* ---------------- ring conditioning ---------------- */
+
+/** Walk the closed polyline and drop a point every `spacing` of arc length. */
+function resampleClosed(pts, spacing) {
+  const n = pts.length;
+  if (n < 3) return pts.map(p => ({...p}));
+  const total = closedLength(pts);
+  if (total < spacing * 3) return pts.map(p => ({...p}));
+
+  const count = Math.max(10, Math.round(total / spacing));
+  const step = total / count;
+  const out = [];
+  let si = 0, travelled = 0;
+  let a = pts[0], b = pts[1 % n], segLen = dist(a, b);
+
+  for (let k = 0; k < count; k++) {
+    const target = k * step;
+    let guard = 0;
+    while (travelled + segLen < target && guard++ < n * 2) {
+      travelled += segLen;
+      si++;
+      a = pts[si % n]; b = pts[(si+1) % n];
+      segLen = dist(a, b);
+    }
+    const t = segLen > EPS ? (target - travelled) / segLen : 0;
+    out.push({ x: a.x + (b.x-a.x)*t, y: a.y + (b.y-a.y)*t });
+  }
+  return out;
+}
+
+/** [.25 .5 .25] passes around the ring — removes hand wobble, keeps big features. */
+function smoothRing(pts, passes) {
+  let cur = pts;
+  for (let p = 0; p < passes; p++) {
+    const n = cur.length, next = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = cur[(i-1+n) % n], b = cur[i], c = cur[(i+1) % n];
+      next[i] = { x: a.x*0.25 + b.x*0.5 + c.x*0.25, y: a.y*0.25 + b.y*0.5 + c.y*0.25 };
+    }
+    cur = next;
+  }
+  return cur;
+}
+const normalizeRing = (pts, passes = 0) =>
+  smoothRing(resampleClosed(pts, RING_SPACING), passes);
+
+/** Closed Catmull-Rom through the ring, emitted as cubic Béziers. */
+function ringPath(ring) {
+  const n = ring.length;
+  if (n < 3) return '';
+  let d = `M ${ring[0].x.toFixed(2)} ${ring[0].y.toFixed(2)}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = ring[(i-1+n) % n], p1 = ring[i], p2 = ring[(i+1) % n], p3 = ring[(i+2) % n];
+    const c1x = p1.x + (p2.x-p0.x)/6, c1y = p1.y + (p2.y-p0.y)/6;
+    const c2x = p2.x - (p3.x-p1.x)/6, c2y = p2.y - (p3.y-p1.y)/6;
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return d + ' Z';
+}
+
+function segmentsCross(a, b, c, d) {
+  const o = (p,q,r) => (q.x-p.x)*(r.y-p.y) - (q.y-p.y)*(r.x-p.x);
+  const d1 = o(a,b,c), d2 = o(a,b,d), d3 = o(c,d,a), d4 = o(c,d,b);
+  return ((d1>0) !== (d2>0)) && ((d3>0) !== (d4>0));
+}
+function selfIntersects(ring) {
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i+2; j < n; j++) {
+      if (i === 0 && j === n-1) continue;   // adjacent across the seam
+      if (segmentsCross(ring[i], ring[(i+1)%n], ring[j], ring[(j+1)%n])) return true;
+    }
+  }
+  return false;
+}
+
+/* ---------------- signed distance + marching squares ---------------- */
+
+/** Negative inside, positive outside. */
+function sdfPoly(xs, ys, n, px, py) {
+  let best = Infinity, inside = false;
+  for (let i = 0, j = n-1; i < n; j = i++) {
+    const ax = xs[j], ay = ys[j], bx = xs[i], by = ys[i];
+    const vx = bx-ax, vy = by-ay, len2 = vx*vx + vy*vy;
+    let t = len2 > EPS ? ((px-ax)*vx + (py-ay)*vy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = px - (ax + vx*t), dy = py - (ay + vy*t);
+    const d2 = dx*dx + dy*dy;
+    if (d2 < best) best = d2;
+    if ((by > py) !== (ay > py) && px < (ax-bx)*(py-by)/(ay-by) + bx) inside = !inside;
+  }
+  const d = Math.sqrt(best);
+  return inside ? -d : d;
+}
+
+// Polynomial smooth min / max — this is what fillets the join between blobs.
+function smin(a, b, k) {
+  if (k <= EPS) return Math.min(a, b);
+  let h = 0.5 + 0.5*(b-a)/k;
+  h = h < 0 ? 0 : h > 1 ? 1 : h;
+  return b*(1-h) + a*h - k*h*(1-h);
+}
+const smax = (a, b, k) => -smin(-a, -b, k);
+
+// edge ids: 0 = bottom, 1 = right, 2 = top, 3 = left
+const MS_TABLE = [
+  [], [3,0], [0,1], [3,1], [1,2], [3,0,1,2], [0,2], [3,2],
+  [2,3], [2,0], [0,1,2,3], [2,1], [1,3], [1,0], [3,0], []
+];
+
+function marchingSquares(field, nx, ny, x0, y0, step) {
+  const segs = [];
+  const interp = (va, vb) => {
+    const dv = va - vb;
+    return Math.abs(dv) < EPS ? 0.5 : va / dv;
+  };
+
+  for (let j = 0; j < ny-1; j++) {
+    for (let i = 0; i < nx-1; i++) {
+      const v00 = field[j*nx + i],       v10 = field[j*nx + i + 1];
+      const v11 = field[(j+1)*nx + i+1], v01 = field[(j+1)*nx + i];
+      const code = (v00 < 0 ? 1 : 0) | (v10 < 0 ? 2 : 0) | (v11 < 0 ? 4 : 0) | (v01 < 0 ? 8 : 0);
+      const edges = MS_TABLE[code];
+      if (!edges.length) continue;
+
+      const pt = (e) => {
+        switch (e) {
+          case 0: return { x: x0 + (i + interp(v00, v10)) * step, y: y0 + j * step };
+          case 1: return { x: x0 + (i+1) * step, y: y0 + (j + interp(v10, v11)) * step };
+          case 2: return { x: x0 + (i + interp(v01, v11)) * step, y: y0 + (j+1) * step };
+          default:return { x: x0 + i * step, y: y0 + (j + interp(v00, v01)) * step };
+        }
+      };
+      for (let e = 0; e < edges.length; e += 2) segs.push([pt(edges[e]), pt(edges[e+1])]);
+    }
+  }
+
+  // Stitch undirected segments into closed loops by shared endpoints.
+  const key = p => `${Math.round(p.x*64)},${Math.round(p.y*64)}`;
+  const nodes = new Map();
+  segs.forEach((s, idx) => {
+    for (const end of [0,1]) {
+      const k = key(s[end]);
+      if (!nodes.has(k)) nodes.set(k, []);
+      nodes.get(k).push({ idx, end });
+    }
+  });
+
+  const used = new Array(segs.length).fill(false);
+  const loops = [];
+  for (let start = 0; start < segs.length; start++) {
+    if (used[start]) continue;
+    used[start] = true;
+    const loop = [segs[start][0], segs[start][1]];
+    let tailKey = key(segs[start][1]);
+    const startKey = key(segs[start][0]);
+
+    for (let guard = 0; guard < segs.length + 4; guard++) {
+      const links = nodes.get(tailKey) || [];
+      const next = links.find(l => !used[l.idx]);
+      if (!next) break;
+      used[next.idx] = true;
+      const other = segs[next.idx][1 - next.end];
+      loop.push(other);
+      tailKey = key(other);
+      if (tailKey === startKey) break;
+    }
+    if (loop.length >= 4) loops.push(loop);
+  }
+  return loops;
+}
+
+/**
+ * mode: 'union' | 'subtract'. Returns a conditioned ring, or null if nothing left.
+ */
+function combineRings(ringA, ringB, mode, soft) {
+  const bb = mode === 'subtract' ? bounds(ringA)
+                                 : bounds(ringA.concat(ringB));
+  const pad = soft + 16;
+  const x0 = bb.x0 - pad, y0 = bb.y0 - pad;
+  const w = (bb.x1 - bb.x0) + pad*2, h = (bb.y1 - bb.y0) + pad*2;
+
+  let step = 4;
+  const MAX = 240;
+  step = Math.max(step, w / MAX, h / MAX);
+  const nx = Math.ceil(w / step) + 1, ny = Math.ceil(h / step) + 1;
+
+  const ax = Float64Array.from(ringA, p => p.x), ay = Float64Array.from(ringA, p => p.y);
+  const bx = Float64Array.from(ringB, p => p.x), by = Float64Array.from(ringB, p => p.y);
+  const field = new Float64Array(nx * ny);
+
+  for (let j = 0; j < ny; j++) {
+    const py = y0 + j*step;
+    for (let i = 0; i < nx; i++) {
+      const px = x0 + i*step;
+      const da = sdfPoly(ax, ay, ringA.length, px, py);
+      const db = sdfPoly(bx, by, ringB.length, px, py);
+      field[j*nx + i] = mode === 'union' ? smin(da, db, soft)
+                                         : smax(da, -db, Math.min(soft, 10));
+    }
+  }
+
+  const loops = marchingSquares(field, nx, ny, x0, y0, step);
+  if (!loops.length) return null;
+  let best = null, bestArea = 0;
+  for (const l of loops) {
+    const a = Math.abs(polyArea(l));
+    if (a > bestArea) { bestArea = a; best = l; }
+  }
+  if (!best || bestArea < MIN_FIELD_AREA) return null;
+  return normalizeRing(best, 1);
+}
+
+/** Repair a ring that crossed itself, reusing the same machinery. */
+function repairRing(ring) {
+  if (!selfIntersects(ring)) return ring;
+  const fixed = combineRings(ring, ring, 'union', 0.001);
+  return fixed || ring;
+}
+
+/* ============================================================
+   State
+   ============================================================ */
+
+let uid = 1;
+const nextId = () => 'id' + (uid++);
+
+const state = {
+  notes: [],
+  fields: [],
+  pan: { x: 0, y: 0 },
+  scale: 1,
+  tool: 'hand',          // 'hand' | 'pencil'
+  reshape: 'clay',       // 'clay' | 'handles'
+  colour: 0,
+  brush: 150,
+  join: 18,
+  tidy: 3,
+  selected: null,        // field id
+};
+
+const undoStack = [];
+function snapshot() {
+  undoStack.push(JSON.stringify({ notes: state.notes, fields: state.fields }));
+  if (undoStack.length > 60) undoStack.shift();
+}
+function undo() {
+  const s = undoStack.pop();
+  if (!s) return;
+  const d = JSON.parse(s);
+  state.notes = d.notes;
+  state.fields = d.fields;
+  if (!state.fields.some(f => f.id === state.selected)) state.selected = null;
+  rebuildNotes();
+  render();
+}
+
+function seed() {
+  state.notes = [
+    { id:nextId(), x:-300, y:-230, text:'Hire a PM',            colour:0 },
+    { id:nextId(), x: -40, y:-250, text:'Rewrite the sync layer',colour:0 },
+    { id:nextId(), x: 210, y:-170, text:'Student interviews',    colour:1 },
+    { id:nextId(), x:-250, y:  30, text:'Drop the Windows build',colour:2 },
+    { id:nextId(), x:  80, y:  70, text:'Weekly demo ritual',    colour:0 },
+    { id:nextId(), x: 330, y:  40, text:'Open-source the engine',colour:1 },
+  ];
+  state.fields = [];
+  state.selected = null;
+  undoStack.length = 0;
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+
+const viewport   = document.getElementById('viewport');
+const world      = document.getElementById('world');
+const fieldG     = document.getElementById('fieldG');
+const toolG      = document.getElementById('toolG');
+const noteLayer  = document.getElementById('noteLayer');
+const hintEl     = document.getElementById('hint');
+
+const OFF = 20000;  // layer offset, see .layer css
+const noteEls = new Map();
+const labelEls = new Map();
+let editingNote = null;
+
+/* --- hover / drag feedback the tool layer draws --- */
+let hoverEdge = null;   // { fieldId, ring index arc highlight }
+let draftStroke = null; // raw points being drawn
+let draftMode = 'union';
+let draftHost = null;   // field the stroke started inside, if any
+
+function screenToWorld(cx, cy) {
+  const r = viewport.getBoundingClientRect();
+  return {
+    x: (cx - r.left - state.pan.x) / state.scale,
+    y: (cy - r.top  - state.pan.y) / state.scale,
+  };
+}
+
+function membersOf(field) {
+  return state.notes.filter(n => pointInPoly(field.ring, noteCentre(n)));
+}
+function noteCentre(n) {
+  const el = noteEls.get(n.id);
+  const h = el ? el.offsetHeight : 140;
+  return { x: n.x + 90, y: n.y + h/2 };
+}
+function fieldsOf(note) {
+  const c = noteCentre(note);
+  return state.fields.filter(f => pointInPoly(f.ring, c));
+}
+function fieldAt(pt) {
+  for (let i = state.fields.length - 1; i >= 0; i--) {
+    if (pointInPoly(state.fields[i].ring, pt)) return state.fields[i];
+  }
+  return null;
+}
+
+function rebuildNotes() {
+  noteLayer.innerHTML = '';
+  noteEls.clear();
+  for (const n of state.notes) {
+    const el = document.createElement('div');
+    el.className = 'note';
+    el.innerHTML = `<div class="body" spellcheck="false"></div><div class="chips"></div>`;
+    el.querySelector('.body').textContent = n.text;
+    el.addEventListener('pointerdown', e => onNotePointerDown(e, n));
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation();
+      const body = el.querySelector('.body');
+      body.contentEditable = 'true';
+      body.focus();
+      editingNote = n.id;
+      document.getSelection().selectAllChildren(body);
+    });
+    el.querySelector('.body').addEventListener('blur', e => {
+      n.text = e.target.textContent.trim();
+      e.target.contentEditable = 'false';
+      editingNote = null;
+    });
+    noteLayer.appendChild(el);
+    noteEls.set(n.id, el);
+  }
+  render();
+}
+
+function render() {
+  world.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.scale})`;
+  viewport.style.backgroundSize = `${28*state.scale}px ${28*state.scale}px`;
+  viewport.style.backgroundPosition = `${state.pan.x}px ${state.pan.y}px`;
+
+  /* ---- fields ---- */
+  let svg = '';
+  for (const f of state.fields) {
+    const c = FIELD_COLOURS[f.colour];
+    svg += `<path d="${ringPath(f.ring)}" transform="translate(${OFF},${OFF})"
+              fill="${c.fill}" fill-opacity="0.55"
+              stroke="${c.edge}" stroke-opacity="0.45" stroke-width="2"/>`;
+  }
+  fieldG.innerHTML = svg;
+
+  /* ---- labels ---- */
+  const seen = new Set();
+  for (const f of state.fields) {
+    seen.add(f.id);
+    let el = labelEls.get(f.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'flabel';
+      el.addEventListener('pointerdown', e => e.stopPropagation());
+      el.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        el.contentEditable = 'true';
+        el.textContent = f.label;
+        el.focus();
+        document.getSelection().selectAllChildren(el);
+      });
+      el.addEventListener('blur', () => {
+        if (el.contentEditable === 'true') {
+          f.label = el.textContent.trim() || 'Field';
+          el.contentEditable = 'false';
+          render();
+        }
+      });
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        e.stopPropagation();
+      });
+      noteLayer.appendChild(el);
+      labelEls.set(f.id, el);
+    }
+    if (el.contentEditable !== 'true') {
+      const n = membersOf(f).length;
+      el.innerHTML = f.label + (n ? `<span class="count">${n}</span>` : '');
+    }
+    const bb = bounds(f.ring);
+    const cx = centroid(f.ring).x;
+    el.style.left = `${cx}px`;
+    el.style.top = `${bb.y0 - 4}px`;
+    el.style.background = FIELD_COLOURS[f.colour].edge;
+    el.style.opacity = state.selected === f.id ? '1' : '0.78';
+  }
+  for (const [id, el] of labelEls) {
+    if (!seen.has(id)) { el.remove(); labelEls.delete(id); }
+  }
+
+  /* ---- notes ---- */
+  for (const n of state.notes) {
+    const el = noteEls.get(n.id);
+    if (!el) continue;
+    el.style.left = `${n.x}px`;
+    el.style.top = `${n.y}px`;
+    el.style.background = NOTE_COLOURS[n.colour];
+    if (editingNote !== n.id) {
+      const body = el.querySelector('.body');
+      if (body.textContent !== n.text) body.textContent = n.text;
+    }
+    const chips = el.querySelector('.chips');
+    chips.innerHTML = fieldsOf(n).map(f =>
+      `<span class="chip" style="background:${FIELD_COLOURS[f.colour].edge}">${f.label}</span>`).join('');
+  }
+
+  /* ---- tool layer: draft stroke, hover falloff, handles ---- */
+  const hair = 1 / state.scale;
+  let tool = '';
+
+  if (draftStroke && draftStroke.length > 1) {
+    const d = draftStroke.map((p,i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    // The stroke tells you what it is about to do: carve, extend <host>, or create.
+    const c = draftMode === 'subtract' ? '#C0392B'
+            : draftHost ? FIELD_COLOURS[draftHost.colour].edge
+            : FIELD_COLOURS[state.colour].edge;
+    tool += `<path d="${d} Z" fill="${c}" fill-opacity="${draftMode === 'subtract' ? 0 : 0.12}"
+               stroke="${c}" stroke-width="${2.5*hair}" stroke-linecap="round"
+               stroke-dasharray="${6*hair} ${5*hair}"/>`;
+    if (draftHost && draftMode !== 'subtract') {
+      tool += `<path d="${ringPath(draftHost.ring)}" fill="none"
+                 stroke="${FIELD_COLOURS[draftHost.colour].edge}" stroke-width="${2*hair}"
+                 stroke-opacity="0.8"/>`;
+    }
+  }
+
+  const sel = state.fields.find(f => f.id === state.selected);
+  if (sel) {
+    tool += `<path d="${ringPath(sel.ring)}" fill="none"
+               stroke="${FIELD_COLOURS[sel.colour].edge}" stroke-width="${2*hair}"
+               stroke-dasharray="${5*hair} ${4*hair}" stroke-opacity="0.9"/>`;
+    if (state.reshape === 'handles') {
+      for (const h of handleIndices(sel.ring)) {
+        const p = sel.ring[h];
+        tool += `<circle cx="${p.x}" cy="${p.y}" r="${5*hair}" fill="#fff"
+                   stroke="${FIELD_COLOURS[sel.colour].edge}" stroke-width="${2*hair}"/>`;
+      }
+    }
+  }
+
+  if (hoverEdge) {
+    const f = state.fields.find(x => x.id === hoverEdge.fieldId);
+    if (f) {
+      const pts = hoverEdge.indices.map(i => f.ring[i]);
+      if (pts.length > 1) {
+        const d = pts.map((p,i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+        tool += `<path d="${d}" fill="none" stroke="${FIELD_COLOURS[f.colour].edge}"
+                   stroke-width="${5*hair}" stroke-opacity="0.75" stroke-linecap="round"/>`;
+      }
+    }
+  }
+
+  toolG.innerHTML = tool;
+  toolG.setAttribute('transform', `translate(${OFF},${OFF})`);
+  updateHint();
+}
+
+let raf = 0;
+function invalidate() {
+  if (raf) return;
+  raf = requestAnimationFrame(() => { raf = 0; render(); });
+}
+
+function handleIndices(ring) {
+  const want = 14;
+  const stride = Math.max(2, Math.round(ring.length / want));
+  const out = [];
+  for (let i = 0; i < ring.length; i += stride) out.push(i);
+  return out;
+}
+
+function updateHint() {
+  let t;
+  if (draftStroke) {
+    t = draftMode === 'subtract' ? `Release to <b>carve</b> this out`
+      : draftHost ? `Release to <b>extend ${draftHost.label}</b>`
+      : `Release to create a <b>new field</b>`;
+  } else if (state.tool === 'pencil') {
+    t = `Drag to draw a field. Start <b>inside</b> an existing field to extend it. Hold <b>⌥</b> to carve.`;
+  } else if (state.selected) {
+    t = state.reshape === 'clay'
+      ? `Drag the <b>edge</b> to push and pull it. Drag inside to move — hold <b>⌘</b> to bring the notes.`
+      : `Drag a <b>handle</b> to reshape. Drag inside to move — hold <b>⌘</b> to bring the notes. <b>⌫</b> deletes.`;
+  } else {
+    t = `<b>B</b> pencil · <b>V</b> hand · drag a note · scroll to pan · ⌘-scroll to zoom`;
+  }
+  hintEl.innerHTML = t;
+}
+
+/* ============================================================
+   Interaction
+   ============================================================ */
+
+let gesture = null;
+
+function onNotePointerDown(e, note) {
+  if (state.tool === 'pencil') return;
+  if (editingNote === note.id) return;
+  e.preventDefault();
+  e.stopPropagation();
+  snapshot();
+  const start = screenToWorld(e.clientX, e.clientY);
+  gesture = {
+    kind: 'note',
+    note,
+    grab: { x: start.x - note.x, y: start.y - note.y },
+  };
+  noteEls.get(note.id)?.classList.add('dragging');
+  // notes come to the front while dragged
+  state.notes = state.notes.filter(n => n !== note).concat([note]);
+  noteLayer.appendChild(noteEls.get(note.id));
+  viewport.setPointerCapture(e.pointerId);
+}
+
+viewport.addEventListener('pointerdown', e => {
+  if (e.button === 1) {                    // middle-drag always pans
+    gesture = { kind:'pan', last:{ x:e.clientX, y:e.clientY } };
+    viewport.setPointerCapture(e.pointerId);
+    return;
+  }
+  if (e.button !== 0) return;
+  const p = screenToWorld(e.clientX, e.clientY);
+
+  /* ---- pencil ---- */
+  if (state.tool === 'pencil') {
+    draftMode = e.altKey ? 'subtract' : 'union';
+    draftHost = draftMode === 'subtract' ? null : fieldAt(p);
+    draftStroke = [p];
+    gesture = { kind:'draw' };
+    viewport.setPointerCapture(e.pointerId);
+    invalidate();
+    return;
+  }
+
+  /* ---- outline grab (reshape) ---- */
+  const grabWorld = EDGE_GRAB / state.scale;
+  let hit = null;
+  for (let i = state.fields.length - 1; i >= 0; i--) {
+    const f = state.fields[i];
+    const near = nearestOnRing(f.ring, p);
+    if (near.d <= grabWorld) { hit = { f, near }; break; }
+  }
+  if (hit) {
+    snapshot();
+    state.selected = hit.f.id;
+    if (state.reshape === 'handles') {
+      // snap to the closest handle
+      const hs = handleIndices(hit.f.ring);
+      let bh = hs[0], bd = Infinity;
+      for (const h of hs) {
+        const d = dist(hit.f.ring[h], p);
+        if (d < bd) { bd = d; bh = h; }
+      }
+      gesture = { kind:'handle', field:hit.f, index:bh, start:p,
+                  base:hit.f.ring.map(q => ({...q})),
+                  stride: Math.max(2, Math.round(hit.f.ring.length / 14)) };
+    } else {
+      const arc = arcWeights(hit.f.ring, hit.near, state.brush);
+      gesture = { kind:'clay', field:hit.f, start:p,
+                  base:hit.f.ring.map(q => ({...q})), weights:arc.weights };
+    }
+    viewport.setPointerCapture(e.pointerId);
+    invalidate();
+    return;
+  }
+
+  /* ---- field interior: select + move ---- */
+  const f = fieldAt(p);
+  if (f) {
+    snapshot();
+    state.selected = f.id;
+    const withNotes = e.metaKey || e.ctrlKey;
+    gesture = {
+      kind:'moveField', field:f, start:p,
+      base:f.ring.map(q => ({...q})),
+      notes: withNotes ? membersOf(f).map(n => ({ n, x:n.x, y:n.y })) : [],
+    };
+    for (const m of gesture.notes) noteEls.get(m.n.id)?.classList.add('carried');
+    viewport.setPointerCapture(e.pointerId);
+    invalidate();
+    return;
+  }
+
+  /* ---- background ---- */
+  state.selected = null;
+  gesture = { kind:'pan', last:{ x:e.clientX, y:e.clientY } };
+  viewport.setPointerCapture(e.pointerId);
+  invalidate();
+});
+
+/** Falloff weights by arc-length distance from the grabbed point. */
+function arcWeights(ring, near, radius) {
+  const n = ring.length;
+  const s = new Float64Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) { s[i] = total; total += dist(ring[i], ring[(i+1) % n]); }
+  const sHit = s[near.i] + near.t * dist(ring[near.i], ring[(near.i+1) % n]);
+
+  const weights = new Float64Array(n);
+  const indices = [];
+  for (let i = 0; i < n; i++) {
+    let d = Math.abs(s[i] - sHit);
+    d = Math.min(d, total - d);
+    const t = d / radius;
+    if (t < 1) {
+      const u = 1 - t*t;
+      weights[i] = u*u;
+      indices.push(i);
+    }
+  }
+  // order the highlight so it draws as one continuous arc
+  indices.sort((a,b) => {
+    const da = Math.min(Math.abs(s[a]-sHit), total - Math.abs(s[a]-sHit));
+    const db = Math.min(Math.abs(s[b]-sHit), total - Math.abs(s[b]-sHit));
+    return da - db;
+  });
+  const ordered = orderArc(indices, n);
+  return { weights, indices: ordered };
+}
+function orderArc(indices, n) {
+  if (!indices.length) return [];
+  const set = new Set(indices);
+  // find a start: an index whose predecessor is not in the set
+  let start = indices[0];
+  for (const i of indices) if (!set.has((i-1+n) % n)) { start = i; break; }
+  const out = [];
+  let cur = start;
+  for (let k = 0; k < indices.length; k++) {
+    out.push(cur);
+    cur = (cur+1) % n;
+    if (!set.has(cur)) break;
+  }
+  return out;
+}
+
+viewport.addEventListener('pointermove', e => {
+  const p = screenToWorld(e.clientX, e.clientY);
+
+  if (!gesture) {
+    // hover feedback
+    let found = null;
+    if (state.tool === 'hand') {
+      const grabWorld = EDGE_GRAB / state.scale;
+      for (let i = state.fields.length - 1; i >= 0; i--) {
+        const f = state.fields[i];
+        const near = nearestOnRing(f.ring, p);
+        if (near.d <= grabWorld) {
+          found = state.reshape === 'clay'
+            ? { fieldId: f.id, indices: arcWeights(f.ring, near, state.brush).indices }
+            : { fieldId: f.id, indices: [] };
+          break;
+        }
+      }
+    }
+    const changed = JSON.stringify(found) !== JSON.stringify(hoverEdge);
+    hoverEdge = found;
+    viewport.classList.toggle('edge', !!found);
+    viewport.classList.toggle('movable', !found && state.tool === 'hand' && !!fieldAt(p));
+    if (changed) invalidate();
+    return;
+  }
+
+  switch (gesture.kind) {
+    case 'pan': {
+      state.pan.x += e.clientX - gesture.last.x;
+      state.pan.y += e.clientY - gesture.last.y;
+      gesture.last = { x:e.clientX, y:e.clientY };
+      viewport.classList.add('panning');
+      break;
+    }
+    case 'note': {
+      gesture.note.x = p.x - gesture.grab.x;
+      gesture.note.y = p.y - gesture.grab.y;
+      break;
+    }
+    case 'draw': {
+      const last = draftStroke[draftStroke.length - 1];
+      if (dist(last, p) > 2 / state.scale) draftStroke.push(p);
+      const mode = e.altKey ? 'subtract' : 'union';
+      if (mode !== draftMode) {
+        draftMode = mode;
+        draftHost = mode === 'subtract' ? null : fieldAt(draftStroke[0]);
+      }
+      break;
+    }
+    case 'clay': {
+      const dx = p.x - gesture.start.x, dy = p.y - gesture.start.y;
+      const w = gesture.weights, base = gesture.base;
+      gesture.field.ring = base.map((q, i) => ({ x: q.x + dx*w[i], y: q.y + dy*w[i] }));
+      break;
+    }
+    case 'handle': {
+      const dx = p.x - gesture.start.x, dy = p.y - gesture.start.y;
+      const base = gesture.base, n = base.length, st = gesture.stride;
+      gesture.field.ring = base.map((q, i) => {
+        let d = Math.abs(i - gesture.index);
+        d = Math.min(d, n - d);
+        if (d >= st) return { ...q };
+        const w = 0.5 * (1 + Math.cos(Math.PI * d / st));
+        return { x: q.x + dx*w, y: q.y + dy*w };
+      });
+      break;
+    }
+    case 'moveField': {
+      const dx = p.x - gesture.start.x, dy = p.y - gesture.start.y;
+      gesture.field.ring = gesture.base.map(q => ({ x:q.x + dx, y:q.y + dy }));
+      for (const m of gesture.notes) { m.n.x = m.x + dx; m.n.y = m.y + dy; }
+      break;
+    }
+  }
+  invalidate();
+});
+
+function endGesture() {
+  if (!gesture) return;
+  const g = gesture;
+  gesture = null;
+  viewport.classList.remove('panning');
+
+  if (g.kind === 'note') {
+    noteEls.get(g.note.id)?.classList.remove('dragging');
+  }
+  if (g.kind === 'moveField') {
+    for (const m of g.notes) noteEls.get(m.n.id)?.classList.remove('carried');
+  }
+  if (g.kind === 'clay') {
+    g.field.ring = repairRing(resampleClosed(g.field.ring, RING_SPACING));
+  }
+  if (g.kind === 'handle') {
+    g.field.ring = repairRing(g.field.ring);
+  }
+  if (g.kind === 'draw') {
+    finishStroke();
+  }
+  hoverEdge = null;
+  render();
+}
+viewport.addEventListener('pointerup', endGesture);
+viewport.addEventListener('pointercancel', endGesture);
+
+function finishStroke() {
+  const raw = draftStroke || [];
+  const host = draftHost;
+  draftStroke = null;
+  draftHost = null;
+  if (raw.length < 4) return;
+  if (Math.abs(polyArea(raw)) < MIN_FIELD_AREA) return;
+
+  const strokeRing = normalizeRing(raw, state.tidy);
+  if (strokeRing.length < 6) return;
+  snapshot();
+
+  /* carve: subtract from every field the stroke touches */
+  if (draftMode === 'subtract') {
+    const survivors = [];
+    for (const f of state.fields) {
+      const touches = strokeRing.some(p => pointInPoly(f.ring, p)) ||
+                      f.ring.some(p => pointInPoly(strokeRing, p));
+      if (!touches) { survivors.push(f); continue; }
+      const out = combineRings(f.ring, strokeRing, 'subtract', state.join);
+      if (out) { f.ring = out; survivors.push(f); }
+    }
+    state.fields = survivors;
+    if (!state.fields.some(f => f.id === state.selected)) state.selected = null;
+    return;
+  }
+
+  /* extend: the field the stroke started inside */
+  if (host && state.fields.includes(host)) {
+    const out = combineRings(host.ring, strokeRing, 'union', state.join);
+    if (out) host.ring = out;
+    state.selected = host.id;
+    return;
+  }
+
+  /* otherwise a new field */
+  const f = {
+    id: nextId(),
+    ring: repairRing(strokeRing),
+    colour: state.colour,
+    label: 'Field ' + (state.fields.length + 1),
+  };
+  state.fields.push(f);
+  state.selected = f.id;
+}
+
+/* ---------------- pan / zoom ---------------- */
+viewport.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const r = viewport.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const before = screenToWorld(e.clientX, e.clientY);
+    const k = Math.exp(-e.deltaY * 0.01);
+    state.scale = Math.min(4, Math.max(0.2, state.scale * k));
+    state.pan.x = mx - before.x * state.scale;
+    state.pan.y = my - before.y * state.scale;
+  } else {
+    state.pan.x -= e.deltaX;
+    state.pan.y -= e.deltaY;
+  }
+  invalidate();
+}, { passive: false });
+
+/* ---------------- keyboard ---------------- */
+window.addEventListener('keydown', e => {
+  if (editingNote || document.activeElement?.isContentEditable) return;
+  const k = e.key.toLowerCase();
+
+  if (e.key === 'Escape') {           // bail out of a stroke or a reshape
+    if (gesture && gesture.kind === 'draw') { draftStroke = null; draftHost = null; gesture = null; }
+    else if (gesture && gesture.base) {
+      gesture.field.ring = gesture.base;
+      for (const m of gesture.notes || []) { m.n.x = m.x; m.n.y = m.y; noteEls.get(m.n.id)?.classList.remove('carried'); }
+      gesture = null;
+      undoStack.pop();
+    }
+    else state.selected = null;
+    render();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); undo(); return; }
+  if (k === 'v') { setTool('hand'); return; }
+  if (k === 'b') { setTool('pencil'); return; }
+  if (k === '[') { setBrush(state.brush - 20); return; }
+  if (k === ']') { setBrush(state.brush + 20); return; }
+  if (k >= '1' && k <= '4') {
+    const i = +k - 1;
+    state.colour = i;
+    const sel = state.fields.find(f => f.id === state.selected);
+    if (sel) { snapshot(); sel.colour = i; }
+    syncChrome(); render();
+    return;
+  }
+  if (e.key === 'Backspace' || e.key === 'Delete') {
+    if (state.selected) {
+      snapshot();
+      state.fields = state.fields.filter(f => f.id !== state.selected);
+      state.selected = null;
+      render();
+    }
+  }
+});
+
+/* ---------------- chrome wiring ---------------- */
+function setTool(t) {
+  state.tool = t;
+  if (t === 'pencil') state.selected = null;
+  viewport.classList.toggle('drawing', t === 'pencil');
+  hoverEdge = null;
+  syncChrome();
+  render();
+}
+function setBrush(v) {
+  state.brush = Math.min(420, Math.max(40, v));
+  document.getElementById('s-brush').value = state.brush;
+  render();
+}
+
+const swatchWrap = document.getElementById('swatches');
+FIELD_COLOURS.forEach((c, i) => {
+  const b = document.createElement('div');
+  b.className = 'swatch';
+  b.style.background = c.fill;
+  b.title = `Field colour ${i+1}`;
+  b.addEventListener('click', () => {
+    state.colour = i;
+    const sel = state.fields.find(f => f.id === state.selected);
+    if (sel) { snapshot(); sel.colour = i; }
+    syncChrome(); render();
+  });
+  swatchWrap.appendChild(b);
+});
+
+document.getElementById('t-hand').onclick   = () => setTool('hand');
+document.getElementById('t-pencil').onclick = () => setTool('pencil');
+document.getElementById('m-clay').onclick    = () => { state.reshape = 'clay';    syncChrome(); render(); };
+document.getElementById('m-handles').onclick = () => { state.reshape = 'handles'; syncChrome(); render(); };
+document.getElementById('b-undo').onclick  = undo;
+document.getElementById('b-reset').onclick = () => { seed(); rebuildNotes(); };
+
+document.getElementById('s-brush').oninput = e => { state.brush = +e.target.value; render(); };
+document.getElementById('s-join').oninput  = e => { state.join  = +e.target.value; };
+document.getElementById('s-tidy').oninput  = e => { state.tidy  = +e.target.value; };
+
+function syncChrome() {
+  document.getElementById('t-hand').classList.toggle('on', state.tool === 'hand');
+  document.getElementById('t-pencil').classList.toggle('on', state.tool === 'pencil');
+  document.getElementById('m-clay').classList.toggle('on', state.reshape === 'clay');
+  document.getElementById('m-handles').classList.toggle('on', state.reshape === 'handles');
+  [...swatchWrap.children].forEach((el, i) => el.classList.toggle('on', i === state.colour));
+  document.getElementById('s-brush').value = state.brush;
+  document.getElementById('s-join').value  = state.join;
+  document.getElementById('s-tidy').value  = state.tidy;
+}
+
+/* ---------------- boot ---------------- */
+function boot() {
+  const r = viewport.getBoundingClientRect();
+  state.pan = { x: r.width/2, y: r.height/2 };
+  seed();
+  rebuildNotes();
+  syncChrome();
+  setTool('pencil');
+}
+boot();
+window.addEventListener('resize', () => invalidate());
+
+// expose for console poking
+window.__fields = state;
+</script>
+</body>
+</html>

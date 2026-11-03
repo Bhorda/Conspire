@@ -1,0 +1,11 @@
+// Copy this file to Config/Signing.xcconfig and fill in your Apple Developer
+// Team ID. Signing.xcconfig is gitignored, so your team never reaches the
+// repository.
+//
+// Find your team ID in Xcode under Settings > Accounts, or at
+// developer.apple.com/account under Membership details.
+//
+// Leaving this empty builds the app without a team, which is fine for local
+// development on your own machine.
+
+DEVELOPMENT_TEAM =

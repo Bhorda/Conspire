@@ -1,0 +1,26 @@
+# Xcode per-user state: window layout, breakpoints, scheme selection.
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Build products
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local signing config - see Config/Signing.xcconfig.template
+Config/Signing.xcconfig
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# macOS
+.DS_Store
