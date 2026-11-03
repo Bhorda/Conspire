@@ -61,7 +61,8 @@ struct WhiteboardRootView: View {
                     stringColour(link.colorIndex).opacity(stringAlpha),
                     style: StrokeStyle(lineWidth: linkWidth(for: link), lineCap: .round)
                 )
-                .animation(WhiteboardStyle.notePlacementAnimation, value: curve)
+                // A pinned end tracks its picture exactly; see `Link.touchesPin`.
+                .animation(link.touchesPin ? nil : WhiteboardStyle.notePlacementAnimation, value: curve)
         }
     }
 
@@ -85,7 +86,7 @@ struct WhiteboardRootView: View {
             .buttonStyle(.plain)
             .help("Delete string")
             .position(x: mid.x, y: mid.y)
-            .animation(WhiteboardStyle.notePlacementAnimation, value: mid)
+            .animation(link.touchesPin ? nil : WhiteboardStyle.notePlacementAnimation, value: mid)
         }
     }
 

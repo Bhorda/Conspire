@@ -112,22 +112,38 @@ extension WhiteboardStore {
         pinGesture = PinGesture(id: id, startU: pin.u, startV: pin.v)
     }
 
+    /// The pin itself stays locked inside the picture — it marks a detail, and
+    /// a detail outside the frame is meaningless — so dragging past the edge
+    /// slides it along the boundary rather than following the pointer out.
+    /// Going clearly beyond is instead how you detach: letting go there takes
+    /// the pin and whatever it was holding.
     func updatePinGesture(atRoot point: CGPoint) {
         guard let gesture = pinGesture,
               let pin = pins[gesture.id],
               let asset = image(withID: pin.imageID)
         else { return }
-        let normalised = asset.normalised(worldPoint: rootToWorld(point))
+
+        let world = rootToWorld(point)
+        let margin = WhiteboardStyle.pinDetachMargin / max(canvasScale, 0.01)
+        let outside = !asset.worldRect.insetBy(dx: -margin, dy: -margin).contains(world)
+        if pinDragWillDetach != outside { pinDragWillDetach = outside }
+
+        let normalised = asset.normalised(worldPoint: world)
         pins[gesture.id]?.u = normalised.u
         pins[gesture.id]?.v = normalised.v
     }
 
     func endPinGesture() {
-        guard let gesture = pinGesture, let pin = pins[gesture.id] else {
-            pinGesture = nil
+        guard let gesture = pinGesture else { return }
+        pinGesture = nil
+        let detaching = pinDragWillDetach
+        pinDragWillDetach = false
+
+        guard let pin = pins[gesture.id] else { return }
+        if detaching {
+            detachPin(gesture.id)
             return
         }
-        pinGesture = nil
         guard pin.u != gesture.startU || pin.v != gesture.startV else { return }
         persistPin(pin)
         appendActionLog("pin moved")
@@ -138,6 +154,23 @@ extension WhiteboardStore {
         pins[gesture.id]?.u = gesture.startU
         pins[gesture.id]?.v = gesture.startV
         pinGesture = nil
+        pinDragWillDetach = false
+    }
+
+    /// Dragged off its picture: the pin goes, and so does every string it was
+    /// holding. Dragging a pin away is the gesture for "this is not connected
+    /// here any more".
+    func detachPin(_ id: UUID) {
+        guard pins[id] != nil else { return }
+        let held = links.values.filter { $0.from == .pin(id) || $0.to == .pin(id) }
+        for link in held { removeLink(link.id) }
+        // The last string leaving already takes the pin, but a pin that was
+        // holding nothing still has to go.
+        if pins[id] != nil {
+            pins.removeValue(forKey: id)
+            deletePinEntity(id: id)
+        }
+        appendActionLog("pin detached")
     }
 
     // MARK: - Lifecycle

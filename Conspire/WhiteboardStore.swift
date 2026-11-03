@@ -39,6 +39,20 @@ struct Link: Identifiable, Hashable, Codable {
         (from == x && to == y) || (from == y && to == x)
     }
 
+    /// True when either end is pinned to an image.
+    ///
+    /// Decides whether the string settles into place or tracks exactly. An
+    /// image is a Core Animation layer with actions disabled, so it moves with
+    /// no easing; a string eased over 200ms visibly comes unstuck from its pin
+    /// while the picture is dragged, and catches up afterwards. Notes *do*
+    /// settle, and their strings settle with them, so this is deliberately
+    /// about pins rather than about whether a drag is happening.
+    var touchesPin: Bool {
+        if case .pin = from { return true }
+        if case .pin = to { return true }
+        return false
+    }
+
     /// Direction-independent identity of the endpoint pair, for dedupe and fanning parallel links.
     var pairKey: String {
         let f = from.keyString
@@ -197,6 +211,9 @@ final class WhiteboardStore: ObservableObject {
     /// does not leave a pin behind.
     var linkDraftCreatedPinID: UUID?
     var pinGesture: PinGesture?
+    /// Set while a pin is being dragged clear of its picture, so the overlay
+    /// can show that letting go now would detach it.
+    @Published var pinDragWillDetach: Bool = false
 
     @Published private(set) var actionLog: [String] = []
 

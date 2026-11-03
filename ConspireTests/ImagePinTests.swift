@@ -303,17 +303,142 @@ struct ImagePinTests {
         #expect(abs((store.pins[pin.id]?.v ?? 0) - 0.25) < 0.0001)
     }
 
-    @Test func draggingAPinOffTheEdgeKeepsItOnThePicture() {
+    /// The pin marks a detail, and a detail outside the frame means nothing, so
+    /// dragging past the edge slides it along the boundary instead of following
+    /// the pointer out.
+    @Test func draggingPastTheEdgeSlidesThePinAlongTheBoundary() {
         let (store, asset) = storeWithImage()
         let pin = ImagePin(imageID: asset.id, u: 0.5, v: 0.5)
         store.pins = [pin.id: pin]
 
         store.beginPinGesture(id: pin.id)
-        store.updatePinGesture(atRoot: CGPoint(x: -4000, y: -4000))
-        store.endPinGesture()
+        // 10pt past the left edge — inside the 18pt forgiveness.
+        store.updatePinGesture(atRoot: CGPoint(x: -10, y: 100))
 
         #expect(store.pins[pin.id]?.u == 0)
-        #expect(store.pins[pin.id]?.v == 0)
+        #expect(abs((store.pins[pin.id]?.v ?? 0) - 0.5) < 0.0001)
+        #expect(!store.pinDragWillDetach)
+
+        store.endPinGesture()
+        #expect(store.pins[pin.id] != nil)
+    }
+
+    // MARK: - Dragging a pin off the picture detaches it
+
+    private func pinnedAndLinked(_ store: WhiteboardStore, _ asset: ImageAsset) -> UUID {
+        store.placementMode = .string
+        store.handleImageTap(asset.id, atNormalised: (u: 0.5, v: 0.5))
+        let id = store.pins.values.first!.id
+        store.commitLink(to: .note(UUID()))
+        store.placementMode = .hand
+        return id
+    }
+
+    @Test func releasingAPinClearOfThePictureTakesItAndItsString() {
+        let (store, asset) = storeWithImage()
+        let id = pinnedAndLinked(store, asset)
+
+        store.beginPinGesture(id: id)
+        store.updatePinGesture(atRoot: CGPoint(x: -200, y: 100))
+        #expect(store.pinDragWillDetach)
+        store.endPinGesture()
+
+        #expect(store.pins.isEmpty)
+        #expect(store.links.isEmpty)
+        #expect(!store.pinDragWillDetach)
+    }
+
+    @Test func comingBackOverThePictureCallsOffTheDetach() {
+        let (store, asset) = storeWithImage()
+        let id = pinnedAndLinked(store, asset)
+
+        store.beginPinGesture(id: id)
+        store.updatePinGesture(atRoot: CGPoint(x: -500, y: 100))
+        #expect(store.pinDragWillDetach)
+        store.updatePinGesture(atRoot: CGPoint(x: 300, y: 100))
+        #expect(!store.pinDragWillDetach)
+        store.endPinGesture()
+
+        #expect(store.pins.count == 1)
+        #expect(store.links.count == 1)
+        #expect(abs((store.pins[id]?.u ?? 0) - 0.75) < 0.0001)
+    }
+
+    @Test func escapeDuringADetachDragPutsThePinBack() {
+        let (store, asset) = storeWithImage()
+        let id = pinnedAndLinked(store, asset)
+
+        store.beginPinGesture(id: id)
+        store.updatePinGesture(atRoot: CGPoint(x: -500, y: -500))
+        #expect(store.handleEscape())
+
+        #expect(store.pins[id]?.u == 0.5)
+        #expect(store.pins[id]?.v == 0.5)
+        #expect(store.links.count == 1)
+        #expect(!store.pinDragWillDetach)
+    }
+
+    /// Forgiveness is a screen measurement, so zooming out must not make the
+    /// edge of a picture a hair trigger in world terms.
+    @Test func detachForgivenessHoldsAtAnyZoom() {
+        let (store, asset) = storeWithImage()
+        let id = pinnedAndLinked(store, asset)
+        store.canvasScale = 0.25
+
+        store.beginPinGesture(id: id)
+        // Root (-10, 25) is world (-40, 100) at this zoom: 40 world units past
+        // the edge, which would detach at 1:1, but only 10pt on screen here.
+        store.updatePinGesture(atRoot: CGPoint(x: -10, y: 25))
+        #expect(!store.pinDragWillDetach)
+        store.endPinGesture()
+
+        #expect(store.pins.count == 1)
+    }
+
+    // MARK: - The settle animation must not fight a live drag
+
+    /// Only a pinned string skips the settle animation. A note-to-note string
+    /// keeps it, because notes ease into place and their strings should too.
+    @Test func onlyPinnedStringsSkipTheSettleAnimation() {
+        let pinID = UUID()
+        #expect(Link(from: .pin(pinID), to: .note(UUID()), colorIndex: 0).touchesPin)
+        #expect(Link(from: .note(UUID()), to: .pin(pinID), colorIndex: 0).touchesPin)
+        #expect(Link(from: .pin(pinID), to: .pin(UUID()), colorIndex: 0).touchesPin)
+        #expect(!Link(from: .note(UUID()), to: .note(UUID()), colorIndex: 0).touchesPin)
+        #expect(!Link(from: .note(UUID()), to: .stack(UUID()), colorIndex: 0).touchesPin)
+    }
+
+    /// The reason the animation had to go: an image is a Core Animation layer
+    /// with actions disabled, so it moves instantly while an eased string
+    /// endpoint arrives 200ms later — the string visibly comes off the pin.
+    @Test func aStringEndpointKeepsUpWithTheImageMidDrag() {
+        let (store, first) = storeWithImage()
+        let second = ImageAsset(
+            worldRect: CGRect(x: 900, y: 0, width: 400, height: 200),
+            zOrder: 1,
+            nativePixelSize: CGSize(width: 400, height: 200),
+            displayPixelCap: 400
+        )
+        store.images.append(second)
+
+        // Both ends on pictures, so the whole curve resolves.
+        store.placementMode = .string
+        store.handleImageTap(first.id, atNormalised: (u: 0.5, v: 0.5))
+        let movingPin = store.pins.values.first!.id
+        store.handleImageTap(second.id, atNormalised: (u: 0.5, v: 0.5))
+        store.placementMode = .hand
+        guard let link = store.links.values.first else {
+            Issue.record("no link")
+            return
+        }
+        #expect(store.curveGeometry(for: link)?.a == CGPoint(x: 200, y: 100))
+
+        store.beginImageMove(id: first.id, atWorld: CGPoint(x: 0, y: 0))
+        store.updateImageGesture(atWorld: CGPoint(x: 500, y: 300))
+
+        // The picture's centre is now (700, 400), and the string end with it.
+        #expect(store.anchorPoint(for: .pin(movingPin)) == CGPoint(x: 700, y: 400))
+        #expect(store.curveGeometry(for: link)?.a == CGPoint(x: 700, y: 400))
     }
 
     @Test func escapeDuringAPinDragPutsItBack() {

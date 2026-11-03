@@ -203,7 +203,11 @@ private struct ImageControlView: View {
                     .strokeBorder(WhiteboardStyle.imageSelectionColor.opacity(0.35), lineWidth: 1)
             }
         }
-        .position(x: rect.midX, y: rect.midY)
+        // Hover and the context menu go on the framed content, *before*
+        // `.position`. A positioned view fills its parent for layout, so a
+        // modifier applied after this line would attach to the whole viewport:
+        // the menu would open on a right-click anywhere, and every pin would
+        // count as hovered all the time.
         .onHover { inside in
             if inside {
                 store.hoveredImageID = asset.id
@@ -212,6 +216,7 @@ private struct ImageControlView: View {
             }
         }
         .contextMenu { contextMenu }
+        .position(x: rect.midX, y: rect.midY)
     }
 
     private var resizeHandle: some View {
@@ -275,17 +280,24 @@ struct PinOverlayView: View {
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { context, _ in
             let radius = WhiteboardStyle.pinRadius
+            let detaching = store.pinDragWillDetach ? store.pinGesture?.id : nil
             for pin in store.visiblePins() {
                 guard let root = store.pinRootPoint(pin) else { continue }
+                let willDetach = pin.id == detaching
+                // Grows and turns red while it is being pulled off, so letting
+                // go is never a surprise.
+                let r = willDetach ? radius * 1.4 : radius
                 let circle = Path(
-                    ellipseIn: CGRect(
-                        x: root.x - radius, y: root.y - radius,
-                        width: radius * 2, height: radius * 2
-                    )
+                    ellipseIn: CGRect(x: root.x - r, y: root.y - r, width: r * 2, height: r * 2)
                 )
-                context.fill(circle, with: .color(WhiteboardStyle.pinColor))
+                context.fill(
+                    circle,
+                    with: .color(willDetach ? WhiteboardStyle.pinDetachColor : WhiteboardStyle.pinColor)
+                )
                 context.stroke(
-                    circle, with: .color(WhiteboardStyle.pinBorderColor), lineWidth: 1.5
+                    circle,
+                    with: .color(willDetach ? .white : WhiteboardStyle.pinBorderColor),
+                    lineWidth: 1.5
                 )
             }
         }

@@ -101,7 +101,12 @@ enum WhiteboardStyle {
     /// at any zoom.
     static let pinRadius: CGFloat = 4.5
     static let pinGrabRadius: CGFloat = 11
+    /// How far past the edge of a picture a pin has to be dragged before
+    /// letting go detaches it. A screen measurement, so the forgiveness feels
+    /// the same at any zoom — the edge itself is never a hair trigger.
+    static let pinDetachMargin: CGFloat = 18
     static let pinColor = Color.white
+    static let pinDetachColor = Color(red: 0.95, green: 0.3, blue: 0.3)
     static let pinBorderColor = Color.black.opacity(0.55)
 
     static let toolbarChipHeight: CGFloat = 44
