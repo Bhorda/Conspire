@@ -54,6 +54,7 @@ extension WhiteboardStore {
 
     func selectImage(_ id: UUID?) {
         selectedImageID = id
+        if id != nil { selectedNoteID = nil }
     }
 
     /// A click on an image, with where on the image it landed.

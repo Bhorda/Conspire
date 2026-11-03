@@ -562,3 +562,86 @@ struct TextLibraryTests {
         #expect(temp.store.textResources.isEmpty)
     }
 }
+
+@MainActor
+struct NoteInspectorTests {
+
+    /// The stamp used to be @State on the card, so it was never saved and a
+    /// recycled view lost it. It is a real control now, so it has to survive.
+    @Test func aStampSurvivesAReopen() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.store.selectNote(noteID)
+        temp.store.setSelectedNoteStamp("lightbulb")
+
+        #expect(temp.service.activeNotesByID[noteID]?.stamp == "lightbulb")
+
+        let reread = try temp.reopen()
+        let notes = try reread.fetch(FetchDescriptor<NoteEntity>())
+        #expect(notes.first?.stamp == "lightbulb")
+    }
+
+    @Test func aStampCanBeCleared() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.store.selectNote(noteID)
+        temp.store.setSelectedNoteStamp("flame")
+        temp.store.setSelectedNoteStamp(nil)
+        #expect(temp.service.activeNotesByID[noteID]?.stamp == nil)
+    }
+
+    @Test func recolouringANoteSticks() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.store.selectNote(noteID)
+        temp.store.setSelectedNoteColour(2)
+
+        #expect(temp.service.activeNotesByID[noteID]?.colour == 2)
+        let reread = try temp.reopen()
+        #expect(try reread.fetch(FetchDescriptor<NoteEntity>()).first?.colour == 2)
+    }
+
+    @Test func aDuplicateCarriesTheStamp() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 1)!
+        temp.store.selectNote(noteID)
+        temp.store.setSelectedNoteStamp("ladybug")
+
+        let clones = temp.service.duplicateNotes(sourceIDs: [noteID])
+        #expect(temp.service.activeNotesByID[clones[0]]?.stamp == "ladybug")
+    }
+
+    /// Only one thing is selected at a time, or Delete and Escape have no
+    /// unambiguous target.
+    @Test func selectingANoteClearsEveryOtherSelection() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        let asset = temp.placeImage()!
+        temp.store.selectImage(asset.id)
+        #expect(temp.store.selectedImageID != nil)
+
+        temp.store.selectNote(noteID)
+        #expect(temp.store.selectedNoteID == noteID)
+        #expect(temp.store.selectedImageID == nil)
+
+        temp.store.selectImage(asset.id)
+        #expect(temp.store.selectedNoteID == nil)
+    }
+
+    @Test func escapeDeselectsANote() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.store.selectNote(noteID)
+        #expect(temp.store.handleEscape())
+        #expect(temp.store.selectedNoteID == nil)
+    }
+
+    @Test func everyStampSymbolHasAReadableName() {
+        for symbol in NoteStamp.symbols {
+            let name = NoteStamp.name(for: symbol)
+            // A menu reading "text.bubble" is what this guards against.
+            #expect(!name.contains("."))
+            #expect(!name.isEmpty)
+        }
+    }
+}

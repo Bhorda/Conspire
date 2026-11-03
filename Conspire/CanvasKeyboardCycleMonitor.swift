@@ -72,6 +72,9 @@ final class CanvasKeyboardCycleHostView: NSView {
                         store.deleteSelectedImage()
                     } else if store.selectedFieldID != nil {
                         store.deleteSelectedField()
+                    } else if let noteID = store.selectedNoteID {
+                        store.selectNote(nil)
+                        store.deleteNote(noteID)
                     } else {
                         store.handleDeleteHandShortcut()
                     }

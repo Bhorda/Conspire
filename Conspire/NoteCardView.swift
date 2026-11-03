@@ -10,8 +10,6 @@ struct NoteCardView: View {
     @ObservedObject var store: WhiteboardStore
     let entry: NoteDrawEntry
     @FocusState private var isTextEditorFocused: Bool
-    @State private var stampSymbol: String = "checkmark"
-    @State private var stampActive: Bool = false
     @State private var dragGestureActive = false
     @State private var isDraggingWithGrabCursor = false
 
@@ -116,36 +114,6 @@ struct NoteCardView: View {
         return showHoverOutline ? WhiteboardStyle.hoverOutlineWidth : 1
     }
 
-    private func selectStamp(_ symbol: String) {
-        stampSymbol = symbol
-        stampActive = true
-    }
-
-    @ViewBuilder
-    private var stampPickerMenu: some View {
-        Button { selectStamp("lightbulb") } label: { Label("Lightbulb", systemImage: "lightbulb") }
-        Button { selectStamp("xmark") } label: { Label("X", systemImage: "xmark") }
-        Button { selectStamp("questionmark") } label: { Label("Question", systemImage: "questionmark") }
-        Button { selectStamp("exclamationmark") } label: { Label("Exclamation", systemImage: "exclamationmark") }
-        Button { selectStamp("text.bubble") } label: { Label("Comment", systemImage: "text.bubble") }
-        Button { selectStamp("link") } label: { Label("Link", systemImage: "link") }
-        ControlGroup {
-            Button { selectStamp("circle") } label: { Image(systemName: "circle") }
-            Button { selectStamp("square") } label: { Image(systemName: "square") }
-            Button { selectStamp("triangleshape") } label: { Image(systemName: "triangleshape") }
-        }
-        Button { selectStamp("sparkles") } label: { Label("Sparkles", systemImage: "sparkles") }
-        Button { selectStamp("ladybug") } label: { Label("Bug", systemImage: "ladybug") }
-        ControlGroup {
-            Button { selectStamp("arrow.triangle.swap") } label: { Image(systemName: "arrow.triangle.swap") }
-            Button { selectStamp("arrow.triangle.merge") } label: { Image(systemName: "arrow.triangle.merge") }
-            Button { selectStamp("arrow.triangle.branch") } label: { Image(systemName: "arrow.triangle.branch") }
-        }
-        Button { selectStamp("magnifyingglass") } label: { Label("Search", systemImage: "magnifyingglass") }
-        Button { selectStamp("flame") } label: { Label("Flame", systemImage: "flame") }
-        Button { selectStamp("snowflake") } label: { Label("Snowflake", systemImage: "snowflake") }
-    }
-
     var body: some View {
         ZStack(alignment: .center) {
             RoundedRectangle(cornerRadius: WhiteboardStyle.cornerRadius)
@@ -155,8 +123,8 @@ struct NoteCardView: View {
                         .stroke(outlineColor, lineWidth: outlineWidth)
                 }
 
-            if stampActive {
-                Image(systemName: stampSymbol)
+            if let stamp = store.activeNotesByID[entry.noteID]?.stamp {
+                Image(systemName: stamp)
                     .foregroundStyle(.black.opacity(0.12))
                     .font(.system(size: 80))
             }
@@ -204,57 +172,6 @@ struct NoteCardView: View {
                 Spacer()
             }
             .padding(5)
-
-            if entry.isTop && stackHovered {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button {
-                            store.deleteNote(entry.noteID)
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.black)
-                                .frame(width: WhiteboardStyle.editButtonSize, height: WhiteboardStyle.editButtonSize)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Delete note")
-                    }
-
-                    Spacer()
-                    HStack {
-                        Button {
-                            stampActive.toggle()
-                        } label: {
-                            Image(systemName: stampActive ? "xmark" : stampSymbol)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.black)
-                                .frame(width: WhiteboardStyle.editButtonSize, height: WhiteboardStyle.editButtonSize)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Toggle stamp (right-click for options)")
-                        .contextMenu {
-                            stampPickerMenu
-                        }
-                        
-                        Spacer()
-                        Button {
-                            store.startEditing(note: entry.noteID)
-                        } label: {
-                            Image(systemName: "pencil.line")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.black)
-                                .frame(width: WhiteboardStyle.editButtonSize, height: WhiteboardStyle.editButtonSize)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Edit note")
-                    }
-                }
-                .padding(4)
-            }
         }
         .frame(width: WhiteboardStyle.noteSize.width, height: WhiteboardStyle.noteSize.height)
         .contentShape(Rectangle())
@@ -289,6 +206,14 @@ struct NoteCardView: View {
                     }
                 }
         )
+        .onTapGesture(count: 2) {
+            // Double-click to edit the words. This replaces the pencil button
+            // that used to sit on the card, and is the gesture people try
+            // first anyway.
+            guard store.carriedGroup == nil, isBoardStackEntry else { return }
+            store.selectNote(nil)
+            store.startEditing(note: entry.noteID)
+        }
         .onTapGesture {
             // Holding notes trumps every creation interaction: the click always means "place".
             if store.carriedGroup != nil {
@@ -310,9 +235,13 @@ struct NoteCardView: View {
                 return
             }
             // Adding to a stack is creation, so it belongs to the note tool.
-            // In the hand it is an ordinary click: stop editing, nothing more.
+            // In the hand, a click selects — which is what gives the note an
+            // inspector like every other object on the canvas.
             if isBoardStackEntry, store.placementMode == .note {
                 store.createNoteOnTopOfBoardStack(groupID: entry.groupID)
+            } else if isBoardStackEntry {
+                store.stopEditing()
+                store.selectNote(entry.noteID)
             } else {
                 store.stopEditing()
             }
@@ -329,3 +258,71 @@ struct NoteCardView: View {
     }
 }
 
+
+/// Colour, stamp and delete for the selected note.
+///
+/// These were three buttons on the card itself — a trash can, a stamp toggle
+/// and a pencil — appearing on hover and competing with the note's own text,
+/// with the stamp picker hidden behind a right-click on one of them. Notes were
+/// the only object on the canvas without a selection, which is why their
+/// controls had nowhere else to live. Now they have one, like fields, strings
+/// and images.
+struct NoteInlineInspector: View {
+    @ObservedObject var store: WhiteboardStore
+    let note: NoteRender
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<WhiteboardStyle.noteBackgrounds.count, id: \.self) { index in
+                Button {
+                    store.setSelectedNoteColour(index)
+                } label: {
+                    Circle()
+                        .fill(WhiteboardStyle.noteBackgrounds[index])
+                        .colourDot(isSelected: note.colour == index)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider().frame(height: 14)
+
+            Menu {
+                if note.stamp != nil {
+                    Button("No stamp") { store.setSelectedNoteStamp(nil) }
+                    Divider()
+                }
+                ForEach(NoteStamp.symbols, id: \.self) { symbol in
+                    Button {
+                        store.setSelectedNoteStamp(symbol)
+                    } label: {
+                        Label(NoteStamp.name(for: symbol), systemImage: symbol)
+                    }
+                }
+            } label: {
+                Image(systemName: note.stamp ?? "seal")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(note.stamp == nil ? .secondary : .primary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Stamp — the faint symbol behind the note's text")
+
+            Divider().frame(height: 14)
+
+            Button(role: .destructive) {
+                let id = note.id
+                store.selectNote(nil)
+                store.deleteNote(id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .help("Delete note")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassCapsule()
+    }
+}

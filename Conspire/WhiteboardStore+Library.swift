@@ -82,7 +82,7 @@ extension WhiteboardStore {
     /// once per library row. Counting it there would be a fetch per row per
     /// render — the same mistake field membership made before it was cached.
     func rebuildTextUseCounts() {
-        guard let context = persistence?.context, let projectID = activeProjectID else {
+        guard let context = persistence?.context, activeProjectID != nil else {
             textResourceUseCounts = [:]
             return
         }

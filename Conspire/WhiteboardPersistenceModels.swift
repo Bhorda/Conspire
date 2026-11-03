@@ -49,6 +49,8 @@ final class NoteEntity {
     /// Set when this note came from the text library. Optional so adding it
     /// stays a lightweight migration.
     var textResourceID: UUID?
+    /// SF Symbol drawn faintly behind the text. nil means none.
+    var stamp: String?
     var board: BoardEntity?
 
     init(
@@ -56,12 +58,14 @@ final class NoteEntity {
         text: String = "",
         colour: Int = 0,
         textResourceID: UUID? = nil,
+        stamp: String? = nil,
         board: BoardEntity? = nil
     ) {
         self.id = id
         self.text = text
         self.colour = colour
         self.textResourceID = textResourceID
+        self.stamp = stamp
         self.board = board
     }
 }

@@ -347,6 +347,7 @@ final class WhiteboardPersistenceService: ObservableObject {
                 text: src.text,
                 colour: src.colour,
                 textResourceID: src.textResourceID,
+                stamp: src.stamp,
                 board: board
             )
             context.insert(clone)
@@ -424,6 +425,27 @@ final class WhiteboardPersistenceService: ObservableObject {
         refreshActiveBoardData()
         onLibraryChanged?()
         return adopted
+    }
+
+    func setNoteColour(noteID: UUID, colour: Int) {
+        guard let board = activeBoard(),
+              let note = board.notes.first(where: { $0.id == noteID })
+        else { return }
+        note.colour = colour
+        board.updatedAt = .now
+        scheduleSave()
+        refreshActiveBoardData()
+    }
+
+    /// nil clears the stamp.
+    func setNoteStamp(noteID: UUID, stamp: String?) {
+        guard let board = activeBoard(),
+              let note = board.notes.first(where: { $0.id == noteID })
+        else { return }
+        note.stamp = stamp
+        board.updatedAt = .now
+        scheduleSave()
+        refreshActiveBoardData()
     }
 
     func textResourceEntity(id: UUID) -> TextResourceEntity? {
@@ -591,7 +613,8 @@ final class WhiteboardPersistenceService: ObservableObject {
                         id: note.id,
                         text: note.textResourceID.flatMap { resolved[$0] } ?? note.text,
                         colour: note.colour,
-                        textResourceID: note.textResourceID
+                        textResourceID: note.textResourceID,
+                        stamp: note.stamp
                     )
                 )
             }

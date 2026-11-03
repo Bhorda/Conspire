@@ -424,8 +424,7 @@ struct FieldInlineInspector: View {
                 get: { labelDraft },
                 set: { labelDraft = $0; store.setSelectedFieldLabel($0) }
             ))
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 140)
+            .capsuleField(width: 132)
 
             ForEach(0..<WhiteboardStyle.fieldFills.count, id: \.self) { index in
                 Button {
@@ -433,13 +432,7 @@ struct FieldInlineInspector: View {
                 } label: {
                     Circle()
                         .fill(FieldPalette.fill(index))
-                        .frame(width: 16, height: 16)
-                        .overlay(
-                            Circle().stroke(
-                                Color.primary.opacity(field.colourIndex == index ? 0.8 : 0),
-                                lineWidth: 2
-                            )
-                        )
+                        .colourDot(isSelected: field.colourIndex == index)
                 }
                 .buttonStyle(.plain)
             }
@@ -448,12 +441,13 @@ struct FieldInlineInspector: View {
                 store.deleteSelectedField()
             } label: {
                 Image(systemName: "trash")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.plain)
         }
-        .padding(8)
-        .glassPanel(cornerRadius: WhiteboardStyle.inspectorCornerRadius)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassCapsule()
         .onAppear { labelDraft = field.label }
         .onChange(of: field.id) { _, _ in labelDraft = field.label }
     }

@@ -71,6 +71,106 @@ struct WhiteboardRootView: View {
         }
     }
 
+    /// A round chip in the floating chrome. There are five of these and they
+    /// differed only by symbol and action.
+    private func roundChip(
+        symbol: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
+                .frame(
+                    width: WhiteboardStyle.toolbarChipHeight,
+                    height: WhiteboardStyle.toolbarChipHeight
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .contentShape(.circle)
+        .chromeChip(in: .circle)
+    }
+
+    /// The boards in the current project, with the project switcher as its
+    /// header.
+    private var boardListPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                projectMenu
+                Spacer()
+                Button {
+                    commitPendingRenameIfNeeded()
+                    persistence.createBoard()
+                    syncStoreBoardMeta()
+                    store.clearTransientStateForBoardSwitch()
+                } label: { Image(systemName: "plus") }
+                .buttonStyle(.plain)
+                .help("New board in this project")
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(persistence.boards) { board in
+                        BoardRowView(
+                            board: board,
+                            isActive: store.activeBoardID == board.id,
+                            isRenaming: renameBoardID == board.id,
+                            renameDraft: $renameDraft,
+                            canDelete: persistence.boardCount() > 1,
+                            onSelect: {
+                                commitPendingRenameIfNeeded()
+                                persistence.selectBoard(id: board.id)
+                                syncStoreBoardMeta()
+                                store.clearTransientStateForBoardSwitch()
+                            },
+                            onBeginRename: {
+                                commitPendingRenameIfNeeded()
+                                renameDraft = board.name
+                                renameBoardID = board.id
+                            },
+                            onCommitRename: {
+                                persistence.renameBoard(id: board.id, name: renameDraft)
+                                renameBoardID = nil
+                                syncStoreBoardMeta()
+                            },
+                            onRequestDelete: {
+                                pendingDeleteBoardID = board.id
+                                pendingDeleteBoardName = board.name
+                            }
+                        )
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 260)
+        .confirmationDialog(
+            "Delete \"\(pendingDeleteBoardName)\"?",
+            isPresented: Binding(
+                get: { pendingDeleteBoardID != nil },
+                set: { if !$0 { pendingDeleteBoardID = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = pendingDeleteBoardID {
+                    persistence.deleteBoard(id: id)
+                    syncStoreBoardMeta()
+                    store.clearTransientStateForBoardSwitch()
+                }
+                pendingDeleteBoardID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteBoardID = nil
+            }
+        } message: {
+            Text("This will remove the board and all its notes. This action cannot be undone.")
+        }
+        .glassPanel()
+    }
+
     private var showsFieldPanel: Bool {
         store.placementMode == .field || store.selectedFieldID != nil
     }
@@ -304,6 +404,19 @@ struct WhiteboardRootView: View {
                         .position(x: mid.x * store.canvasScale + store.pixelSnappedPan.width, y: mid.y * store.canvasScale + store.pixelSnappedPan.height)
                 }
 
+                // The note inspector, above the selected note.
+                if let noteID = store.selectedNoteID,
+                   let note = store.activeNotesByID[noteID],
+                   let entry = store.noteDrawEntries.first(where: { $0.noteID == noteID }) {
+                    NoteInlineInspector(store: store, note: note)
+                        .position(
+                            x: (entry.worldTopLeft.x + WhiteboardStyle.noteSize.width / 2)
+                                * store.canvasScale + store.pixelSnappedPan.width,
+                            y: entry.worldTopLeft.y * store.canvasScale
+                                + store.pixelSnappedPan.height - 26
+                        )
+                }
+
                 if let field = store.field(withID: store.selectedFieldID) {
                     let box = FieldGeometry.bounds(field.ring)
                     let centre = FieldGeometry.centroid(field.ring)
@@ -330,152 +443,57 @@ struct WhiteboardRootView: View {
                 .padding(24)
                 .animation(WhiteboardStyle.panelAnimation, value: showsFieldPanel)
 
-                VStack (alignment: .leading){
-                    Spacer()
-                    
-                    HStack {
-                        VStack(alignment: .leading, spacing: WhiteboardStyle.glassContainerSpacing) {
-                                
-                                if !isSidebarCollapsed {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            projectMenu
-                                            Spacer()
-                                            Button {
-                                                commitPendingRenameIfNeeded()
-                                                persistence.createBoard()
-                                                syncStoreBoardMeta()
-                                                store.clearTransientStateForBoardSwitch()
-                                            } label: { Image(systemName: "plus") }
-                                            .buttonStyle(.plain)
-                                            .help("New board in this project")
-                                        }
-                                        ScrollView {
-                                            VStack(alignment: .leading, spacing: 6) {
-                                                ForEach(persistence.boards) { board in
-                                                    BoardRowView(
-                                                        board: board,
-                                                        isActive: store.activeBoardID == board.id,
-                                                        isRenaming: renameBoardID == board.id,
-                                                        renameDraft: $renameDraft,
-                                                        canDelete: persistence.boardCount() > 1,
-                                                        onSelect: {
-                                                            commitPendingRenameIfNeeded()
-                                                            persistence.selectBoard(id: board.id)
-                                                            syncStoreBoardMeta()
-                                                            store.clearTransientStateForBoardSwitch()
-                                                        },
-                                                        onBeginRename: {
-                                                            commitPendingRenameIfNeeded()
-                                                            renameDraft = board.name
-                                                            renameBoardID = board.id
-                                                        },
-                                                        onCommitRename: {
-                                                            persistence.renameBoard(id: board.id, name: renameDraft)
-                                                            renameBoardID = nil
-                                                            syncStoreBoardMeta()
-                                                        },
-                                                        onRequestDelete: {
-                                                            pendingDeleteBoardID = board.id
-                                                            pendingDeleteBoardName = board.name
-                                                        }
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        .frame(maxHeight: 260)
-                                    }
-                                    .padding(12)
-                                    .frame(width: 260)
-                                    .confirmationDialog(
-                                        "Delete \"\(pendingDeleteBoardName)\"?",
-                                        isPresented: Binding(
-                                            get: { pendingDeleteBoardID != nil },
-                                            set: { if !$0 { pendingDeleteBoardID = nil } }
-                                        ),
-                                        titleVisibility: .visible
-                                    ) {
-                                        Button("Delete", role: .destructive) {
-                                            if let id = pendingDeleteBoardID {
-                                                persistence.deleteBoard(id: id)
-                                                syncStoreBoardMeta()
-                                                store.clearTransientStateForBoardSwitch()
-                                            }
-                                            pendingDeleteBoardID = nil
-                                        }
-                                        Button("Cancel", role: .cancel) {
-                                            pendingDeleteBoardID = nil
-                                        }
-                                    } message: {
-                                        Text("This will remove the board and all its notes. This action cannot be undone.")
-                                    }
-                                    .glassPanel()
-                                }
 
-                                // The round buttons share a container, so they
-                                // blend into one shape where they meet. The
-                                // board panel is kept out of it: it is its own
-                                // surface, and a `Menu` inside a container is
-                                // documented to break the morph on 26.1.
-                                GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
-                                    VStack(spacing: 6) {
-                                Button {
-                                    withAnimation { isLibraryCollapsed.toggle() }
-                                } label: {
-                                    Image(systemName: "tray.full")
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .padding(12)
-                                        .contentShape(Rectangle())
-                                        .frame(
-                                            width: WhiteboardStyle.toolbarChipHeight,
-                                            height: WhiteboardStyle.toolbarChipHeight
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                                .help("Project library — drag text or images onto the board")
-                                .contentShape(.circle)
-                                .chromeChip(in: .circle)
+                // Boards, top left.
+                VStack(alignment: .leading) {
+                    HStack(alignment: .top, spacing: WhiteboardStyle.glassContainerSpacing) {
+                        roundChip(
+                            symbol: isSidebarCollapsed ? "rectangle.stack" : "rectangle.stack.fill",
+                            help: "Boards in this project"
+                        ) {
+                            withAnimation(WhiteboardStyle.panelAnimation) {
+                                isSidebarCollapsed.toggle()
+                            }
+                        }
 
-                                Button {
-                                    withAnimation {
-                                        isSidebarCollapsed.toggle()
-                                    }
-                                } label: {
-                                    Image(systemName: isSidebarCollapsed ? "rectangle.stack" : "rectangle.stack.fill")
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .padding(12)
-                                        .contentShape(Rectangle())
-                                        .frame(
-                                            width: WhiteboardStyle.toolbarChipHeight,
-                                            height: WhiteboardStyle.toolbarChipHeight
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                                .help("Boards in this project")
-                                .contentShape(.circle)
-                                .chromeChip(in: .circle)
+                        if !isSidebarCollapsed {
+                            boardListPanel
+                                .transition(
+                                    .scale(scale: 0.94, anchor: .topLeading)
+                                        .combined(with: .opacity)
+                                )
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
 
-                                Button {
-                                    store.cycleStringVisibility()
-                                } label: {
-                                    Image(systemName: store.stringVisibility.symbolName)
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .padding(12)
-                                        .contentShape(Rectangle())
-                                        .frame(
-                                            width: WhiteboardStyle.toolbarChipHeight,
-                                            height: WhiteboardStyle.toolbarChipHeight
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                                .help("Toggle strings: Hidden / Dimmed / Full")
-                                .contentShape(.circle)
-                                .chromeChip(in: .circle)
+                // The library, bottom left, with image import beside it —
+                // adding a picture is what you do with the library open.
+                VStack(alignment: .leading) {
+                    Spacer(minLength: 0)
+                    HStack(alignment: .bottom, spacing: WhiteboardStyle.glassContainerSpacing) {
+                        GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
+                            VStack(spacing: 6) {
+                                roundChip(
+                                    symbol: isLibraryCollapsed ? "tray.full" : "tray.full.fill",
+                                    help: "Project library — drag text or images onto the board"
+                                ) {
+                                    withAnimation(WhiteboardStyle.panelAnimation) {
+                                        isLibraryCollapsed.toggle()
                                     }
+                                }
+                                roundChip(
+                                    symbol: "photo.badge.plus",
+                                    help: "Add an image — or drop a file on the canvas, or paste one (⌘V)"
+                                ) {
+                                    store.presentImageImporter(
+                                        atWorld: store.viewportCenterWorld(viewportSize: proxy.size)
+                                    )
                                 }
                             }
-                            .padding(24)
-                            .padding(.bottom, 54)
+                        }
 
                         if !isLibraryCollapsed {
                             LibraryPanelView(
@@ -483,31 +501,30 @@ struct WhiteboardRootView: View {
                                 viewportSize: proxy.size,
                                 tab: $libraryTab
                             )
-                            .padding(.bottom, 78)
                             .transition(
                                 .scale(scale: 0.94, anchor: .bottomLeading)
                                     .combined(with: .opacity)
                             )
                         }
-
-                        Spacer()
+                        Spacer(minLength: 0)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                
-                VStack(alignment: .center) {
-                    Spacer()
-                    
-                    
-                    
-                    GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
-                        HStack(spacing: WhiteboardStyle.toolbarSpacing) {
-                            ModifierFlagsMonitor(shift: $shiftHeld, command: $commandHeld, option: $optionHeld)
-                                .frame(width: 0, height: 0)
-                                .allowsHitTesting(false)
+                .padding(24)
+                .padding(.bottom, 78)
 
-                            Spacer()
+                // The bottom bar. The tools are centred in the window, so the
+                // right-hand group is laid over the top instead of sharing an
+                // HStack with them — a spacer between the two would push the
+                // tools off-centre by half the right group's width.
+                VStack {
+                    Spacer(minLength: 0)
+                    ZStack {
+                        ModifierFlagsMonitor(shift: $shiftHeld, command: $commandHeld, option: $optionHeld)
+                            .frame(width: 0, height: 0)
+                            .allowsHitTesting(false)
 
+                        GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
+                            HStack(spacing: WhiteboardStyle.toolbarSpacing) {
                             // The hand leads the row because it is where you
                             // come back to: the note and field tools return
                             // here once they have made something, and so does
@@ -542,50 +559,48 @@ struct WhiteboardRootView: View {
                                 help: "Field — drag to draw a zone (⌥1 · ⌥2 · ⌥3)"
                             ) { store.pickFieldColour($0) }
 
-                            Spacer()
-                            
-                            // An action, not a tool, so it lives with the
-                            // zoom and compass rather than among the tool
-                            // chips — nothing in the left group should be a
-                            // chip that never fills.
-                            Button {
-                                store.presentImageImporter(
-                                    atWorld: store.viewportCenterWorld(viewportSize: proxy.size)
-                                )
-                            } label: {
-                                Image(systemName: "photo.badge.plus")
-                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                    .padding(.horizontal, 14)
-                                    .frame(height: WhiteboardStyle.toolbarChipHeight)
-                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
-                            .help("Add an image — or drop a file on the canvas, or paste one (⌘V)")
-                            .contentShape(.capsule)
-                            .chromeChip(in: .capsule)
+                        }
 
-                            Button {
-                                store.animateZoomReset(viewportSize: proxy.size)
-                            } label: {
-                                Label("\(Int(store.canvasScale*100))%", systemImage: "plus.magnifyingglass")
-                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize-4, weight: .semibold))
-                                    .padding(.horizontal, 14)
-                                    .frame(height: WhiteboardStyle.toolbarChipHeight)
-                                    .contentShape(Rectangle())
+                        HStack {
+                            Spacer(minLength: 0)
+                            GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
+                                HStack(spacing: WhiteboardStyle.toolbarSpacing) {
+                                    Button {
+                                        store.animateZoomReset(viewportSize: proxy.size)
+                                    } label: {
+                                        Label(
+                                            "\(Int(store.canvasScale * 100))%",
+                                            systemImage: "plus.magnifyingglass"
+                                        )
+                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize - 4, weight: .semibold))
+                                        .padding(.horizontal, 14)
+                                        .frame(height: WhiteboardStyle.toolbarChipHeight)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Reset zoom to 100% (viewport center)")
+                                    .contentShape(.capsule)
+                                    // The effect first, then the ID naming it.
+                                    .chromeChip(in: .capsule)
+                                    .glassEffectID("zoom", in: keyboardHints)
+
+                                    roundChip(
+                                        symbol: store.stringVisibility.symbolName,
+                                        help: "Toggle strings: Hidden / Dimmed / Full"
+                                    ) {
+                                        store.cycleStringVisibility()
+                                    }
+
+                                    HomeCompassHUD(store: store, viewportSize: proxy.size)
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .help("Reset zoom to 100% (viewport center)")
-                            .contentShape(.capsule)
-                            // The effect first, then the ID that names it.
-                            .chromeChip(in: .capsule)
-                            .glassEffectID("zoom", in: keyboardHints)
-                            
-                            HomeCompassHUD(store: store, viewportSize: proxy.size)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(24)
+
 
                 // Debug HUD — toggled from the Developer menu (⇧⌘D).
                 if showDebugHUD {
@@ -604,6 +619,8 @@ struct WhiteboardRootView: View {
                 }
             }
             .coordinateSpace(name: "root")
+            // Panels read this to stand their blur down mid-gesture.
+            .environment(\.canvasIsMoving, store.isCanvasMoving)
             .dropDestination(for: CanvasDrop.self) { drops, location in
                 let world = store.rootToWorld(location)
                 var files: [URL] = []
@@ -904,8 +921,7 @@ private struct LinkInlineInspector: View {
                 get: { link.label ?? labelDraft },
                 set: { labelDraft = $0; store.setSelectedLinkLabel($0) }
             ))
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 140)
+            .capsuleField(width: 132)
 
             ForEach(0..<3) { idx in
                 Button {
@@ -913,7 +929,7 @@ private struct LinkInlineInspector: View {
                 } label: {
                     Circle()
                         .fill(WhiteboardStyle.stringColors[idx])
-                        .frame(width: 16, height: 16)
+                        .colourDot(isSelected: link.colorIndex == idx)
                 }
                 .buttonStyle(.plain)
             }
@@ -922,12 +938,12 @@ private struct LinkInlineInspector: View {
                 store.deleteSelectedLink()
             } label: {
                 Image(systemName: "trash")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.plain)
         }
-        .padding(8)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(radius: 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassCapsule()
     }
 }

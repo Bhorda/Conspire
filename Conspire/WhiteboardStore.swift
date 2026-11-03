@@ -148,11 +148,25 @@ final class WhiteboardStore: ObservableObject {
     /// When true, sidebar board-name `TextField` is active; canvas must not swallow Backspace/delete.
     @Published var isBoardListRenaming: Bool = false
     @Published var hoveredGroupID: UUID?
+    /// The note whose inspector is showing. Notes were the only object on the
+    /// canvas without a selection, which is why their controls had to live on
+    /// the card itself.
+    @Published var selectedNoteID: UUID?
     @Published private(set) var carriedGroup: NoteGroup?
     /// Option-stamp clones animating toward placement; originals stay in `carriedGroup`.
     @Published private(set) var stampPlacementOverlay: NoteGroup?
     @Published var canvasPan: CGSize = .zero
     @Published var canvasScale: CGFloat = 1.0
+    /// True while the canvas is actively being panned or zoomed.
+    ///
+    /// Glass samples whatever is behind it, and while the canvas moves that is
+    /// a new backdrop every frame — a cost nothing can cache, and worse under a
+    /// pinch than a pan because the content is scaling rather than sliding. So
+    /// the floating panels drop their blur for the duration of the gesture and
+    /// take it back once the canvas settles. Nobody is studying a panel's blur
+    /// while they are throwing the board around.
+    @Published private(set) var isCanvasMoving: Bool = false
+    private var canvasSettleTask: Task<Void, Never>?
     @Published var cursorInRoot: CGPoint = .zero
     @Published var noteColourPicked: Int = 0
     @Published var placementMode: PlacementMode = .hand
@@ -389,10 +403,12 @@ final class WhiteboardStore: ObservableObject {
             cancelLinkDraft()
             return true
         }
-        if selectedFieldID != nil || selectedLinkID != nil || selectedImageID != nil {
+        if selectedFieldID != nil || selectedLinkID != nil || selectedImageID != nil
+            || selectedNoteID != nil {
             selectField(nil)
             selectLink(nil)
             selectImage(nil)
+            selectedNoteID = nil
             return true
         }
         if placementMode != .hand {
@@ -505,6 +521,27 @@ final class WhiteboardStore: ObservableObject {
 
     func selectLink(_ id: LinkID?) {
         selectedLinkID = id
+        if id != nil { selectedNoteID = nil }
+    }
+
+    /// One selection at a time, so Delete and Escape always have one target.
+    func selectNote(_ id: UUID?) {
+        selectedNoteID = id
+        if id != nil {
+            selectedFieldID = nil
+            selectedImageID = nil
+            selectedLinkID = nil
+        }
+    }
+
+    func setSelectedNoteColour(_ index: Int) {
+        guard let id = selectedNoteID else { return }
+        persistence?.setNoteColour(noteID: id, colour: index)
+    }
+
+    func setSelectedNoteStamp(_ symbol: String?) {
+        guard let id = selectedNoteID else { return }
+        persistence?.setNoteStamp(noteID: id, stamp: symbol)
     }
 
     func setSelectedLinkColor(index: Int) {
@@ -750,9 +787,28 @@ final class WhiteboardStore: ObservableObject {
             width: canvasPan.width + translation.width,
             height: canvasPan.height + translation.height
         )
+        noteCanvasMovement()
+    }
+
+    /// Marks the canvas as moving, and schedules the moment it stops.
+    ///
+    /// Scroll and pinch arrive as a stream of discrete events with no end, so
+    /// "settled" has to be inferred from a gap between them.
+    private func noteCanvasMovement() {
+        if !isCanvasMoving { isCanvasMoving = true }
+        canvasSettleTask?.cancel()
+        canvasSettleTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                self.isCanvasMoving = false
+            }
+            self.canvasSettleTask = nil
+        }
     }
 
     func applyZoom(magnification: CGFloat, atRootPoint rootPoint: CGPoint) {
+        noteCanvasMovement()
         let oldScale = max(canvasScale, 0.0001)
         let scaleBase = max(isSnappedTo1x ? (snapBypassScaleAccumulator ?? oldScale) : oldScale, 0.0001)
         let raw = scaleBase * (1 + magnification)

@@ -24,21 +24,40 @@ import SwiftUI
 /// use `ConcentricRectangle` and get a corner radius that actually relates to
 /// this one instead of a hard-coded guess.
 struct GlassPanel: ViewModifier {
-    /// Escape hatch. A glass panel re-blurs every frame while the canvas moves
-    /// underneath it, which was once the app's last real stutter. Fields and
-    /// images have since moved to Core Animation, so the budget is far larger —
-    /// but the blur is not free, and this is the switch if it shows.
+    /// Escape hatch, if glass ever costs more than it is worth.
     @AppStorage("useGlassPanels") private var useGlassPanels: Bool = true
     /// macOS dims chrome in windows that are not frontmost.
     @Environment(\.appearsActive) private var appearsActive
+    /// Whether the canvas is moving under this panel right now.
+    @Environment(\.canvasIsMoving) private var canvasIsMoving
 
     var cornerRadius: CGFloat = WhiteboardStyle.panelCornerRadius
 
     func body(content: Content) -> some View {
         content
             .containerShape(.rect(cornerRadius: cornerRadius))
-            .modifier(PanelSurface(cornerRadius: cornerRadius, glass: useGlassPanels))
+            .modifier(
+                PanelSurface(
+                    cornerRadius: cornerRadius,
+                    // Blur is the one thing here that cannot be cached while
+                    // the backdrop changes, so it stands down for the gesture.
+                    glass: useGlassPanels && !canvasIsMoving
+                )
+            )
             .opacity(appearsActive ? 1 : WhiteboardStyle.inactiveChromeOpacity)
+    }
+}
+
+private struct CanvasIsMovingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set once at the root from `WhiteboardStore.isCanvasMoving`, so every
+    /// panel can stand its blur down without each one observing the store.
+    var canvasIsMoving: Bool {
+        get { self[CanvasIsMovingKey.self] }
+        set { self[CanvasIsMovingKey.self] = newValue }
     }
 }
 
@@ -49,7 +68,9 @@ private struct PanelSurface: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if glass {
-            content.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+            content
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                .transition(.opacity)
         } else {
             content.background(
                 RoundedRectangle(cornerRadius: cornerRadius)
@@ -115,5 +136,71 @@ extension View {
     /// A chip that only displays — no click, so no interactive response.
     func chromeReadout<S: Shape>(in shape: S) -> some View {
         glassEffect(.regular, in: shape)
+    }
+}
+
+// MARK: - Role: an inline inspector
+
+/// The small panel that hangs off a selected object — a field, a string, a note.
+///
+/// A capsule rather than a rounded rectangle, so it belongs to the same family
+/// as the chrome chips instead of introducing a third corner radius.
+struct GlassCapsule: ViewModifier {
+    @AppStorage("useGlassPanels") private var useGlassPanels: Bool = true
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.canvasIsMoving) private var canvasIsMoving
+
+    func body(content: Content) -> some View {
+        content
+            .containerShape(.capsule)
+            .modifier(CapsuleSurface(glass: useGlassPanels && !canvasIsMoving))
+            .opacity(appearsActive ? 1 : WhiteboardStyle.inactiveChromeOpacity)
+    }
+}
+
+private struct CapsuleSurface: ViewModifier {
+    let glass: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if glass {
+            content.glassEffect(.regular.interactive(), in: .capsule)
+        } else {
+            content.background(
+                Capsule()
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.14)))
+            )
+        }
+    }
+}
+
+extension View {
+    /// An inspector hanging off a selected object.
+    func glassCapsule() -> some View {
+        modifier(GlassCapsule())
+    }
+
+    /// A text field inside an inspector: a capsule, echoing the one around it.
+    /// `.roundedBorder` was the third corner radius in the app.
+    func capsuleField(width: CGFloat) -> some View {
+        textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(width: width)
+            .background(Capsule().fill(Color.primary.opacity(0.09)))
+    }
+
+    /// A colour dot in an inspector, ringed when it is the current choice.
+    func colourDot(isSelected: Bool) -> some View {
+        frame(width: 17, height: 17)
+            .overlay(
+                Circle().stroke(
+                    Color.primary.opacity(isSelected ? 0.85 : 0),
+                    lineWidth: 2
+                )
+            )
+            .contentShape(.circle)
     }
 }

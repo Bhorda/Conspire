@@ -304,3 +304,76 @@ struct LibraryPerformanceTests {
         }
     }
 }
+
+// MARK: - Zooming
+
+/// Panning keeps the canvas scale fixed; pinching changes it every frame. Any
+/// cache keyed on scale therefore hits while panning and misses while zooming,
+/// which is exactly the shape of "panning is smooth but zoom lags".
+@MainActor
+struct ZoomPerformanceTests {
+
+    private let viewport = CGSize(width: 1600, height: 1000)
+
+    @Test func costOfDotGridWhileZooming() {
+        let cache = DotGridPathCache()
+        var scale: CGFloat = 0.6
+        measure("dot grid: one ZOOM frame", iterations: 120) {
+            // A pinch moves the scale a little every frame.
+            scale += 0.004
+            let spacing = DotGridPathCache.screenSpacing(scale: scale)
+            _ = cache.lattice(
+                spacing: spacing, size: viewport, radius: WhiteboardStyle.dotGridRadius
+            )
+        }
+    }
+
+    @Test func costOfDotGridWhilePanning() {
+        let cache = DotGridPathCache()
+        let spacing = DotGridPathCache.screenSpacing(scale: 1)
+        measure("dot grid: one PAN frame", iterations: 120) {
+            _ = cache.lattice(
+                spacing: spacing, size: viewport, radius: WhiteboardStyle.dotGridRadius
+            )
+        }
+    }
+
+    @Test func costOfFieldLayersWhileZooming() {
+        let view = FieldLayerHostView(frame: CGRect(origin: .zero, size: viewport))
+        let fields = (0..<3).map { i in
+            Field(ring: blob(CGFloat(i) * 300, 200, 140), colourIndex: i % 3, label: "F\(i)")
+        }
+        view.apply(fields: fields, pan: .zero, scale: 1)
+
+        var scale: CGFloat = 0.6
+        measure("3 fields: one ZOOM frame", iterations: 120) {
+            scale += 0.004
+            view.apply(fields: fields, pan: .zero, scale: scale)
+        }
+    }
+
+    @Test func costOfImageLayersWhileZooming() {
+        let view = ImageLayerHostView(frame: CGRect(origin: .zero, size: viewport))
+        let decoded = ImageCodec.decode(makeTestImageData(width: 1024, height: 768))!
+        var images: [ImageAsset] = []
+        var contents: [UUID: CGImage] = [:]
+        for i in 0..<6 {
+            let asset = ImageAsset(
+                worldRect: CGRect(x: CGFloat(i % 3) * 420, y: CGFloat(i / 3) * 340,
+                                  width: 400, height: 300),
+                zOrder: i,
+                nativePixelSize: CGSize(width: 4000, height: 3000),
+                displayPixelCap: 1024
+            )
+            images.append(asset)
+            contents[asset.resourceID] = decoded
+        }
+        view.apply(images: images, contents: contents, pan: .zero, scale: 1)
+
+        var scale: CGFloat = 0.6
+        measure("6 images: one ZOOM frame", iterations: 120) {
+            scale += 0.004
+            view.apply(images: images, contents: contents, pan: .zero, scale: scale)
+        }
+    }
+}
