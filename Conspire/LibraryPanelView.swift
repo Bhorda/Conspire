@@ -26,17 +26,30 @@ struct LibraryPanelView: View {
     let viewportSize: CGSize
     @Binding var tab: LibraryTab
 
+    /// The picker drives this, not the binding.
+    ///
+    /// `tab` is backed by `@AppStorage` in the root view, so binding the picker
+    /// straight to it meant every tab switch re-evaluated the root body and
+    /// pushed a value back down mid-interaction — which showed up as the search
+    /// field flickering. The stored value is now written *after* the change.
+    @State private var selectedTab: LibraryTab?
     @State private var search = ""
     @State private var showingUsesFor: UUID?
     @State private var newTextDraft = ""
     @State private var isAddingText = false
     @State private var pendingDelete: (id: UUID, kind: LibraryDragPayload.Kind, uses: Int)?
 
+    private var activeTab: LibraryTab { selectedTab ?? tab }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
             searchField
             content
+        }
+        .onAppear { if selectedTab == nil { selectedTab = tab } }
+        .onChange(of: selectedTab) { _, new in
+            if let new, new != tab { tab = new }
         }
         .padding(WhiteboardStyle.panelPadding)
         .frame(width: 300)
@@ -101,15 +114,15 @@ struct LibraryPanelView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Picker("", selection: $tab) {
+            Picker("", selection: $selectedTab) {
                 ForEach(LibraryTab.allCases, id: \.self) { option in
-                    Text(option.label).tag(option)
+                    Text(option.label).tag(Optional(option))
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            if tab == .text {
+            if activeTab == .text {
                 Button {
                     isAddingText = true
                 } label: { Image(systemName: "plus") }
@@ -136,7 +149,7 @@ struct LibraryPanelView: View {
     @ViewBuilder
     private var content: some View {
         ScrollView {
-            switch tab {
+            switch activeTab {
             case .images: imageGrid
             case .text: textList
             }
@@ -157,17 +170,14 @@ struct LibraryPanelView: View {
         if store.imageResources.isEmpty {
             emptyNote("Drop a picture on the board and it appears here.")
         } else {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.fixed(84), spacing: 8), count: 3),
-                spacing: 8
-            ) {
+            LazyVStack(spacing: 8) {
                 ForEach(filteredImages) { resource in
                     LibraryThumbnail(image: store.imageThumbnails[resource.id])
-                        .overlay(alignment: .bottomTrailing) { useBadge(count: nil) }
                         .draggable(
                             LibraryDragPayload(kind: .image, resourceID: resource.id)
                         ) {
                             LibraryThumbnail(image: store.imageThumbnails[resource.id])
+                                .frame(width: 120)
                         }
                         .onTapGesture { showingUsesFor = resource.id }
                         .popover(isPresented: usesBinding(for: resource.id)) {
@@ -259,18 +269,6 @@ struct LibraryPanelView: View {
             .padding(.vertical, 8)
     }
 
-    @ViewBuilder
-    private func useBadge(count: Int?) -> some View {
-        if let count, count > 1 {
-            Text("\(count)")
-                .font(.system(size: 9, weight: .semibold))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(.black.opacity(0.6)))
-                .foregroundStyle(.white)
-                .padding(3)
-        }
-    }
 
     private func usesPopover(
         uses: [ResourceUse], title: String, onDelete: @escaping () -> Void
@@ -326,9 +324,12 @@ struct LibraryPanelView: View {
     }
 }
 
-/// A library preview: every tile the same flat rectangle, with the picture
-/// scaled to fill and clipped. Uniform tiles read as a row of previews; the
-/// real aspect ratios would read as a ragged collage.
+/// A library preview: the full width of the panel at a fixed height, with the
+/// picture cropped to fill it.
+///
+/// A preview rather than a thumbnail — the point is to recognise the image, and
+/// a wide strip of it does that better than a small complete copy. Every row is
+/// the same height, so the list reads as a column rather than a ragged collage.
 struct LibraryThumbnail: View {
     let image: CGImage?
 
@@ -338,18 +339,26 @@ struct LibraryThumbnail: View {
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: .fill)
             } else {
                 Image(systemName: "photo")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 84, height: 54)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .frame(maxWidth: .infinity)
+        .frame(height: WhiteboardStyle.libraryPreviewHeight)
+        .clipped()
+        .clipShape(ConcentricRectangle(
+            uniformTopCorners: .concentric(minimum: .fixed(6)),
+            uniformBottomCorners: .concentric(minimum: .fixed(6))
+        ))
         .overlay(
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(Color.primary.opacity(0.12))
+            ConcentricRectangle(
+                uniformTopCorners: .concentric(minimum: .fixed(6)),
+                uniformBottomCorners: .concentric(minimum: .fixed(6))
+            )
+            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
     }
 }

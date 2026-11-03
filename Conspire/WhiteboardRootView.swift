@@ -252,29 +252,6 @@ struct WhiteboardRootView: View {
         }
     }
 
-    @ViewBuilder
-    private func hoveredLinkDeleteButton() -> some View {
-        if store.stringVisibility != .hidden,
-           store.carriedGroup == nil,
-           let hoveredID = store.hoveredLinkID,
-           let link = store.links[hoveredID],
-           let mid = store.midpoint(for: link) {
-            Button {
-                store.removeLink(hoveredID)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.white, stringColour(link.colorIndex))
-                    .background(Circle().fill(Color.black.opacity(0.35)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Delete string")
-            .position(x: mid.x, y: mid.y)
-            .animation(link.touchesPin ? nil : WhiteboardStyle.notePlacementAnimation, value: mid)
-        }
-    }
 
     @ViewBuilder
     private func draftShape() -> some View {
@@ -380,14 +357,6 @@ struct WhiteboardRootView: View {
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
 
-                // Delete affordance for the hovered string, above notes so it stays clickable.
-                ZStack(alignment: .topLeading) {
-                    hoveredLinkDeleteButton()
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                .scaleEffect(store.canvasScale , anchor: .topLeading)
-                .offset(x: store.pixelSnappedPan.width, y: store.pixelSnappedPan.height)
-
 //                ActionLogView(store: store)
                 CursorModifierFollowView(
                     cursorInRoot: store.cursorInRoot,
@@ -440,13 +409,14 @@ struct WhiteboardRootView: View {
                     }
                     Spacer()
                 }
-                .padding(24)
+                .padding(.horizontal, WhiteboardStyle.chromeInset)
+                .padding(.top, WhiteboardStyle.chromeTopInset)
                 .animation(WhiteboardStyle.panelAnimation, value: showsFieldPanel)
 
 
                 // Boards, top left.
                 VStack(alignment: .leading) {
-                    HStack(alignment: .top, spacing: WhiteboardStyle.glassContainerSpacing) {
+                    HStack(alignment: .top, spacing: WhiteboardStyle.chromeSpacing) {
                         roundChip(
                             symbol: isSidebarCollapsed ? "rectangle.stack" : "rectangle.stack.fill",
                             help: "Boards in this project"
@@ -467,50 +437,51 @@ struct WhiteboardRootView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(24)
+                .padding(.horizontal, WhiteboardStyle.chromeInset)
+                .padding(.top, WhiteboardStyle.chromeTopInset)
 
                 // The library, bottom left, with image import beside it —
-                // adding a picture is what you do with the library open.
-                VStack(alignment: .leading) {
+                // adding a picture is what you do with the library open. The
+                // panel stacks above them, so the buttons keep the corner.
+                VStack(alignment: .leading, spacing: WhiteboardStyle.chromeSpacing) {
                     Spacer(minLength: 0)
-                    HStack(alignment: .bottom, spacing: WhiteboardStyle.glassContainerSpacing) {
-                        GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
-                            VStack(spacing: 6) {
-                                roundChip(
-                                    symbol: isLibraryCollapsed ? "tray.full" : "tray.full.fill",
-                                    help: "Project library — drag text or images onto the board"
-                                ) {
-                                    withAnimation(WhiteboardStyle.panelAnimation) {
-                                        isLibraryCollapsed.toggle()
-                                    }
-                                }
-                                roundChip(
-                                    symbol: "photo.badge.plus",
-                                    help: "Add an image — or drop a file on the canvas, or paste one (⌘V)"
-                                ) {
-                                    store.presentImageImporter(
-                                        atWorld: store.viewportCenterWorld(viewportSize: proxy.size)
-                                    )
+
+                    if !isLibraryCollapsed {
+                        LibraryPanelView(
+                            store: store,
+                            viewportSize: proxy.size,
+                            tab: $libraryTab
+                        )
+                        .transition(
+                            .scale(scale: 0.94, anchor: .bottomLeading)
+                                .combined(with: .opacity)
+                        )
+                    }
+
+                    GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
+                        HStack(spacing: WhiteboardStyle.chromeSpacing) {
+                            roundChip(
+                                symbol: isLibraryCollapsed ? "tray.full" : "tray.full.fill",
+                                help: "Project library — drag text or images onto the board"
+                            ) {
+                                withAnimation(WhiteboardStyle.panelAnimation) {
+                                    isLibraryCollapsed.toggle()
                                 }
                             }
+                            roundChip(
+                                symbol: "photo.badge.plus",
+                                help: "Add an image — or drop a file on the canvas, or paste one (⌘V)"
+                            ) {
+                                store.presentImageImporter(
+                                    atWorld: store.viewportCenterWorld(viewportSize: proxy.size)
+                                )
+                            }
+                            Spacer(minLength: 0)
                         }
-
-                        if !isLibraryCollapsed {
-                            LibraryPanelView(
-                                store: store,
-                                viewportSize: proxy.size,
-                                tab: $libraryTab
-                            )
-                            .transition(
-                                .scale(scale: 0.94, anchor: .bottomLeading)
-                                    .combined(with: .opacity)
-                            )
-                        }
-                        Spacer(minLength: 0)
                     }
                 }
-                .padding(24)
-                .padding(.bottom, 78)
+                .padding(.horizontal, WhiteboardStyle.chromeInset)
+                .padding(.bottom, WhiteboardStyle.chromeInset)
 
                 // The bottom bar. The tools are centred in the window, so the
                 // right-hand group is laid over the top instead of sharing an
@@ -524,7 +495,7 @@ struct WhiteboardRootView: View {
                             .allowsHitTesting(false)
 
                         GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
-                            HStack(spacing: WhiteboardStyle.toolbarSpacing) {
+                            HStack(spacing: WhiteboardStyle.chromeSpacing) {
                             // The hand leads the row because it is where you
                             // come back to: the note and field tools return
                             // here once they have made something, and so does
@@ -565,7 +536,7 @@ struct WhiteboardRootView: View {
                         HStack {
                             Spacer(minLength: 0)
                             GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
-                                HStack(spacing: WhiteboardStyle.toolbarSpacing) {
+                                HStack(spacing: WhiteboardStyle.chromeSpacing) {
                                     Button {
                                         store.animateZoomReset(viewportSize: proxy.size)
                                     } label: {
@@ -599,7 +570,8 @@ struct WhiteboardRootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(24)
+                .padding(.horizontal, WhiteboardStyle.chromeInset)
+                .padding(.bottom, WhiteboardStyle.chromeInset)
 
 
                 // Debug HUD — toggled from the Developer menu (⇧⌘D).

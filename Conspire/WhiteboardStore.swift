@@ -717,8 +717,11 @@ final class WhiteboardStore: ObservableObject {
             selectLink(hitLink)
             return
         }
+        // Clicking empty canvas puts everything down.
         selectLink(nil)
         selectField(nil)
+        selectImage(nil)
+        selectedNoteID = nil
 
         if placementMode == .string {
             cancelLinkDraft()

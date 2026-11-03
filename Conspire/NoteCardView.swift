@@ -148,7 +148,10 @@ struct NoteCardView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .focused($isTextEditorFocused)
                     .onAppear {
-                        isTextEditorFocused = true
+                        // Asserted on the next tick, not during the appear: the
+                        // second half of the double-click that started editing
+                        // lands after the field exists and takes focus back.
+                        Task { @MainActor in isTextEditorFocused = true }
                     }
                 } else {
                     Text(text.isEmpty ? " " : text)
@@ -247,7 +250,11 @@ struct NoteCardView: View {
             }
         }
         .onChange(of: isEditing) { _, editing in
-            isTextEditorFocused = editing
+            if editing {
+                Task { @MainActor in isTextEditorFocused = true }
+            } else {
+                isTextEditorFocused = false
+            }
         }
         .onDisappear {
             if isDraggingWithGrabCursor {
@@ -299,9 +306,14 @@ struct NoteInlineInspector: View {
                     }
                 }
             } label: {
+                // Fixed box: SF Symbols differ in width, so without this the
+                // capsule resized every time the stamp changed, and again on
+                // hover — which read as the whole inspector jittering.
                 Image(systemName: note.stamp ?? "seal")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(note.stamp == nil ? .secondary : .primary)
+                    .frame(width: 18, height: 16)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

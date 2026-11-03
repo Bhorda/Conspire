@@ -123,6 +123,16 @@ enum WhiteboardStyle {
     static let panelPadding: CGFloat = 12
     /// How close glass surfaces have to be before they blend into one shape.
     static let glassContainerSpacing: CGFloat = 10
+    /// Distance from the window edge for every floating element, so nothing
+    /// sits at a different inset from its neighbours.
+    static let chromeInset: CGFloat = 20
+    /// Top inset. Larger than the rest because the window has no title bar, so
+    /// anything at the top would otherwise sit under the traffic lights.
+    static let chromeTopInset: CGFloat = 52
+    /// The one gap between chrome elements and between groups of them.
+    static let chromeSpacing: CGFloat = 10
+    /// Library previews: full panel width, this tall, cropped to fill.
+    static let libraryPreviewHeight: CGFloat = 54
     /// macOS dims chrome in a window that is not frontmost.
     static let inactiveChromeOpacity: Double = 0.55
     /// How a floating panel arrives and leaves. Glass reads badly when it

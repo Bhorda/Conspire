@@ -645,3 +645,40 @@ struct NoteInspectorTests {
         }
     }
 }
+
+@MainActor
+struct SelectionClearingTests {
+
+    /// Clicking empty canvas puts everything down. Before this, a selected
+    /// image or note kept its inspector open over a board you had moved on from.
+    @Test func clickingTheBackgroundClearsEverySelection() throws {
+        let temp = try TemporaryStore()
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        let asset = temp.placeImage(at: CGPoint(x: 2000, y: 2000))!
+
+        temp.store.selectNote(noteID)
+        temp.store.handleBackgroundPrimaryTap(
+            atRootPoint: CGPoint(x: 5, y: 5),
+            modifiers: InputModifiers(shift: false, command: false, option: false)
+        )
+        #expect(temp.store.selectedNoteID == nil)
+
+        temp.store.selectImage(asset.id)
+        temp.store.handleBackgroundPrimaryTap(
+            atRootPoint: CGPoint(x: 5, y: 5),
+            modifiers: InputModifiers(shift: false, command: false, option: false)
+        )
+        #expect(temp.store.selectedImageID == nil)
+    }
+
+    @Test func clickingTheBackgroundInTheNoteToolStillCreates() throws {
+        let temp = try TemporaryStore()
+        temp.store.placementMode = .note
+        temp.store.handleBackgroundPrimaryTap(
+            atRootPoint: CGPoint(x: 40, y: 40),
+            modifiers: InputModifiers(shift: false, command: false, option: false)
+        )
+        // Deselecting must not have cost the note tool its one job.
+        #expect(temp.store.editingNoteID != nil)
+    }
+}
