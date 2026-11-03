@@ -443,6 +443,9 @@ extension WhiteboardStore {
 
     func selectField(_ id: UUID?) {
         selectedFieldID = id
+        // One selection at a time, so Delete and Escape always have an
+        // unambiguous target.
+        if id != nil { selectedImageID = nil }
     }
 
     func setSelectedFieldLabel(_ label: String) {

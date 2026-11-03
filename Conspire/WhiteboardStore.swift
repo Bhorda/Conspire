@@ -10,10 +10,15 @@ import SwiftUI
 import Foundation
 import SwiftData
 
-/// Endpoint identifier for strings (notes or stacks)
+/// Endpoint identifier for strings: a note, a whole stack, or a pin on an image.
+///
+/// A string never attaches to an image as a whole — it attaches to a pin, which
+/// is a point on that image. So "connected to this part of the picture" is the
+/// only kind of connection an image can have.
 enum NodeID: Hashable, Codable {
     case note(UUID)
     case stack(UUID)
+    case pin(UUID)
 }
 
 struct LinkID: Hashable, Codable {
@@ -47,6 +52,7 @@ extension NodeID {
         switch self {
         case .note(let id): return "n:\(id.uuidString)"
         case .stack(let id): return "s:\(id.uuidString)"
+        case .pin(let id): return "p:\(id.uuidString)"
         }
     }
 }
@@ -173,6 +179,24 @@ final class WhiteboardStore: ObservableObject {
     @Published var fieldMoveGroupIDs: Set<UUID> = []
     @Published var fieldMoveOffset: CGSize = .zero
     var fieldGesture: FieldGesture?
+
+    // MARK: - Images
+    @Published var images: [ImageAsset] = []
+    /// Decoded display assets, one per image, handed straight to a `CALayer`.
+    /// This dictionary *is* the cache: one decode per image, filled on import,
+    /// on load, and on a resample.
+    @Published var imageContents: [UUID: CGImage] = [:]
+    @Published var selectedImageID: UUID?
+    @Published var hoveredImageID: UUID?
+    var imageGesture: ImageGesture?
+    var imageUndoBeforeGesture: ImageUndoState?
+
+    /// Pins: points on an image that strings attach to, by pin id.
+    @Published var pins: [UUID: ImagePin] = [:]
+    /// Pin created to start the current string draft, so abandoning the draft
+    /// does not leave a pin behind.
+    var linkDraftCreatedPinID: UUID?
+    var pinGesture: PinGesture?
 
     @Published private(set) var actionLog: [String] = []
 
@@ -321,13 +345,22 @@ final class WhiteboardStore: ObservableObject {
             cancelFieldGesture()
             return true
         }
+        if imageGesture != nil {
+            cancelImageGesture()
+            return true
+        }
+        if pinGesture != nil {
+            cancelPinGesture()
+            return true
+        }
         if linkDraftSource != nil {
             cancelLinkDraft()
             return true
         }
-        if selectedFieldID != nil || selectedLinkID != nil {
+        if selectedFieldID != nil || selectedLinkID != nil || selectedImageID != nil {
             selectField(nil)
             selectLink(nil)
+            selectImage(nil)
             return true
         }
         if placementMode != .hand {
@@ -394,6 +427,12 @@ final class WhiteboardStore: ObservableObject {
     func cancelLinkDraft() {
         linkDraftSource = nil
         linkDraftCursor = nil
+        // A pin made only to start this string goes with it. On a successful
+        // commit the pin now holds a link, so this leaves it alone.
+        if let pinID = linkDraftCreatedPinID {
+            linkDraftCreatedPinID = nil
+            removePinIfOrphaned(pinID)
+        }
     }
 
     func cycleStringVisibility() {
@@ -473,15 +512,44 @@ final class WhiteboardStore: ObservableObject {
         switch node {
         case .note(let id): return id
         case .stack(let id): return id
+        case .pin(let id): return id
         }
     }
 
     func removeLink(_ id: LinkID) {
+        let removed = links[id]
         links.removeValue(forKey: id)
         deleteLink(id: id)
         if selectedLinkID == id { selectedLinkID = nil }
         if hoveredLinkID == id { hoveredLinkID = nil }
+        // A pin exists only to hold strings, so the last one leaving takes it.
+        if let removed {
+            for node in [removed.from, removed.to] {
+                if case .pin(let pinID) = node { removePinIfOrphaned(pinID) }
+            }
+        }
         appendActionLog("link deleted")
+    }
+
+    /// Reconciles persisted links with `links` — needed after an undo replaces
+    /// the dictionary wholesale. Lives here because the insert and delete
+    /// helpers it uses are private to this file.
+    func reconcileLinkEntities() {
+        guard let context = persistence?.context, let boardID = activeBoardID else { return }
+        let predicate = #Predicate<LinkEntity> { $0.boardID == boardID }
+        let entities = (try? context.fetch(FetchDescriptor<LinkEntity>(predicate: predicate))) ?? []
+        var kept = Set<UUID>()
+        for entity in entities {
+            if links[LinkID(entity.id)] == nil {
+                context.delete(entity)
+            } else {
+                kept.insert(entity.id)
+            }
+        }
+        for link in links.values where !kept.contains(link.id.rawValue) {
+            saveLink(link)
+        }
+        try? context.save()
     }
 
     func loadLinksForActiveBoard() {
@@ -1187,6 +1255,12 @@ final class WhiteboardStore: ObservableObject {
         )
     }
 
+    /// World point at the middle of the viewport — where something arrives
+    /// when it was not dropped anywhere in particular.
+    func viewportCenterWorld(viewportSize: CGSize) -> CGPoint {
+        rootToWorld(CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2))
+    }
+
     func rootToWorld(_ rootPoint: CGPoint) -> CGPoint {
         let safeScale = max(canvasScale, 0.0001)
         return CGPoint(
@@ -1594,6 +1668,11 @@ final class WhiteboardStore: ObservableObject {
         case .stack(let gid):
             if let render = activeGroups.first(where: { $0.id == gid }) { return render.anchor }
             return inHandGroups().first(where: { $0.id == gid })?.anchor
+        case .pin(let pid):
+            // Pins are normalised to their image, so this follows the image
+            // through any move, resize or resample with no extra bookkeeping.
+            guard let pin = pins[pid], let asset = image(withID: pin.imageID) else { return nil }
+            return asset.worldPoint(of: pin)
         }
     }
 

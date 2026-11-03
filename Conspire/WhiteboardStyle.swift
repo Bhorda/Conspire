@@ -84,6 +84,26 @@ enum WhiteboardStyle {
     )
     static let editButtonSize: CGFloat = 22
     /// Bottom glass toolbar: shared chip height, symbol size, and inter-chip spacing.
+    // MARK: - Images
+
+    /// Long edge an imported image is placed at — two notes wide.
+    static let imageImportLongEdge: CGFloat = noteSize.width * 2
+    /// Floor for the resize handle, so an image cannot be shrunk to nothing.
+    static let imageMinimumLongEdge: CGFloat = 60
+    static let imageSelectionColor = Color.accentColor
+    static let imageSelectionWidth: CGFloat = 2
+    /// Screen-space size of the corner resize handle.
+    static let imageResizeHandleSize: CGFloat = 14
+
+    // MARK: - Pins
+
+    /// Pins are drawn in screen space at a constant size, so they stay grabbable
+    /// at any zoom.
+    static let pinRadius: CGFloat = 4.5
+    static let pinGrabRadius: CGFloat = 11
+    static let pinColor = Color.white
+    static let pinBorderColor = Color.black.opacity(0.55)
+
     static let toolbarChipHeight: CGFloat = 44
     static let toolbarSymbolSize: CGFloat = 17
     static let toolbarSpacing: CGFloat = 8

@@ -18,6 +18,7 @@ private func makeBoard(notes: Int) throws -> (WhiteboardStore, WhiteboardPersist
     let container = try ModelContainer(
         for: BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
              LinkEntity.self, FieldEntity.self,
+             ImageEntity.self, ImagePinEntity.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     let service = WhiteboardPersistenceService()
@@ -142,5 +143,99 @@ struct CanvasPerformanceTests {
             i += 1
             store.updateCursor(CGPoint(x: 400 + i.truncatingRemainder(dividingBy: 50), y: 300))
         }
+    }
+}
+
+// MARK: - Images
+
+@MainActor
+struct ImagePerformanceTests {
+
+    /// The claim behind putting images in Core Animation is that a pan costs a
+    /// container transform and some layer geometry, and never a texture upload
+    /// or a decode. This measures that claim rather than assuming it.
+    @Test func costOfImageLayersPerFrame() {
+        let view = ImageLayerHostView(frame: CGRect(x: 0, y: 0, width: 1600, height: 1000))
+        let decoded = ImageCodec.decode(makeTestImageData(width: 1024, height: 768))!
+
+        var images: [ImageAsset] = []
+        var contents: [UUID: CGImage] = [:]
+        for i in 0..<6 {
+            let asset = ImageAsset(
+                worldRect: CGRect(
+                    x: CGFloat(i % 3) * 420, y: CGFloat(i / 3) * 340,
+                    width: 400, height: 300
+                ),
+                zOrder: i,
+                nativePixelSize: CGSize(width: 4000, height: 3000),
+                displayPixelCap: 1024
+            )
+            images.append(asset)
+            contents[asset.id] = decoded
+        }
+
+        // First pass builds the layers and uploads the textures.
+        view.apply(images: images, contents: contents, pan: .zero, scale: 1)
+
+        var pan = CGSize.zero
+        measure("6 images: apply() per pan frame", iterations: 240) {
+            pan.width += 1
+            view.apply(images: images, contents: contents, pan: pan, scale: 1)
+        }
+    }
+
+    @Test func costOfDecodingADisplayAsset() {
+        let data = makeTestImageData(width: 1024, height: 768)
+        measure("decode one 1024px display asset", iterations: 20) {
+            _ = ImageCodec.decode(data)
+        }
+    }
+
+    /// Import is the one slow step, which is why it runs off the main actor.
+    @Test func costOfPreparingAnImport() {
+        let data = makeTestImageData(width: 4000, height: 3000)
+        measure("prepare a 4000x3000 import", iterations: 5) {
+            _ = ImageCodec.prepare(originalData: data)
+        }
+    }
+}
+
+// MARK: - Link endpoint persistence
+
+/// Pins added a third endpoint kind to a column that stored a Bool. These
+/// cover the compatibility path, which is the part that could quietly damage
+/// an existing board.
+struct LinkEndpointPersistenceTests {
+
+    @Test func allThreeEndpointKindsRoundTrip() {
+        for node in [NodeID.note(UUID()), .stack(UUID()), .pin(UUID())] {
+            let restored = NodeID(
+                kind: node.kind.rawValue,
+                legacyIsNote: node.asRaw().0,
+                id: node.asRaw().1
+            )
+            #expect(restored == node)
+        }
+    }
+
+    /// A row written before pins existed has no stored kind, and must still
+    /// read back as whatever it was.
+    @Test func aRowWithNoStoredKindFallsBackToTheLegacyFlag() {
+        let id = UUID()
+        #expect(NodeID(kind: nil, legacyIsNote: true, id: id) == .note(id))
+        #expect(NodeID(kind: nil, legacyIsNote: false, id: id) == .stack(id))
+    }
+
+    @Test func anUnrecognisedKindFallsBackRatherThanFailing() {
+        let id = UUID()
+        #expect(NodeID(kind: 99, legacyIsNote: true, id: id) == .note(id))
+        #expect(NodeID(kind: -1, legacyIsNote: false, id: id) == .stack(id))
+    }
+
+    @Test func endpointKindsHaveStableStoredValues() {
+        // These numbers are in the user's database; they cannot be reordered.
+        #expect(NodeID.Kind.note.rawValue == 0)
+        #expect(NodeID.Kind.stack.rawValue == 1)
+        #expect(NodeID.Kind.pin.rawValue == 2)
     }
 }

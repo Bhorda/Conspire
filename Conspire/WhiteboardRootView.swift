@@ -125,6 +125,12 @@ struct WhiteboardRootView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .allowsHitTesting(false)
 
+                // Images stand on the fields and sit under the notes. Also a
+                // Core Animation layer, also drawn in screen space.
+                ImageLayerView(store: store)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .allowsHitTesting(false)
+
                 // Reshape / move surface. Its hit area is only the fields themselves,
                 // so clicks on empty canvas still reach the background below.
                 if store.placementMode != .field {
@@ -148,6 +154,11 @@ struct WhiteboardRootView: View {
                 .offset(x: store.pixelSnappedPan.width, y: store.pixelSnappedPan.height)
                 .allowsHitTesting(false)
                 
+                // Select / move / resize, in screen space so the outline and
+                // handle keep a constant size at any zoom.
+                ImageInteractionLayer(store: store)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+
                 ZStack(alignment: .topLeading) {
                     let w = WhiteboardStyle.noteSize.width
                     let h = WhiteboardStyle.noteSize.height
@@ -165,6 +176,16 @@ struct WhiteboardRootView: View {
                 // notes, and likewise drawn in screen space.
                 FieldOverlayView(store: store)
                     .frame(width: proxy.size.width, height: proxy.size.height)
+
+                // Pins sit above the notes so they stay grabbable even where a
+                // note overlaps the picture; the hit area is only the pins
+                // themselves, so everything else falls through.
+                PinOverlayView(store: store)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                if store.placementMode == .hand {
+                    PinInteractionLayer(store: store)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                }
 
                 // Pencil: covers the notes so a stroke can be drawn straight across them.
                 if store.placementMode == .field {
@@ -425,6 +446,25 @@ struct WhiteboardRootView: View {
 
                             Spacer()
                             
+                            // An action, not a tool, so it lives with the
+                            // zoom and compass rather than among the tool
+                            // chips — nothing in the left group should be a
+                            // chip that never fills.
+                            Button {
+                                store.presentImageImporter(
+                                    atWorld: store.viewportCenterWorld(viewportSize: proxy.size)
+                                )
+                            } label: {
+                                Image(systemName: "photo.badge.plus")
+                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
+                                    .padding(.horizontal, 14)
+                                    .frame(height: WhiteboardStyle.toolbarChipHeight)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Add an image — or drop a file on the canvas, or paste one (⌘V)")
+                            .glassEffect()
+
                             Button {
                                 store.animateZoomReset(viewportSize: proxy.size)
                             } label: {
@@ -463,6 +503,13 @@ struct WhiteboardRootView: View {
                 }
             }
             .coordinateSpace(name: "root")
+            .dropDestination(for: URL.self) { urls, location in
+                store.importImages(
+                    from: urls.filter(\.isFileURL),
+                    atWorld: store.rootToWorld(location)
+                )
+                return true
+            }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background {
                 ZStack {
@@ -521,6 +568,8 @@ struct WhiteboardRootView: View {
         store.activeBoardName = persistence.activeBoardName
         store.loadLinksForActiveBoard()
         store.loadFieldsForActiveBoard()
+        store.loadImagesForActiveBoard()
+        store.loadPinsForActiveBoard()
     }
 
     /// Commits any in-progress inline board rename (e.g. before selecting another board or starting a new rename).

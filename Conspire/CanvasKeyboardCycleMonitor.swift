@@ -64,8 +64,13 @@ final class CanvasKeyboardCycleHostView: NSView {
                 // Let Backspace reach focused TextFields (note body or sidebar board rename).
                 if isEditingText { return event }
                 Task { @MainActor in
-                    // A selected field is the more specific target than the hand.
-                    if store.selectedFieldID != nil && store.carriedGroup == nil {
+                    // A selected image or field is a more specific target than
+                    // the hand; only one of them can be selected at a time.
+                    if store.carriedGroup != nil {
+                        store.handleDeleteHandShortcut()
+                    } else if store.selectedImageID != nil {
+                        store.deleteSelectedImage()
+                    } else if store.selectedFieldID != nil {
                         store.deleteSelectedField()
                     } else {
                         store.handleDeleteHandShortcut()
@@ -81,6 +86,19 @@ final class CanvasKeyboardCycleHostView: NSView {
             if event.keyCode == KeyCode.escape {
                 let handled = MainActor.assumeIsolated { store.handleEscape() }
                 return handled ? nil : event
+            }
+
+            // ⌘V pastes an image at the cursor.
+            if event.charactersIgnoringModifiers == "v",
+               event.modifierFlags.contains(.command),
+               !event.modifierFlags.contains(.option),
+               !isEditingText {
+                Task { @MainActor in
+                    store.importImageFromPasteboard(
+                        atWorld: store.rootToWorld(store.cursorInRoot)
+                    )
+                }
+                return nil
             }
 
             // 1/2/3 pick a note colour; ⌘1/2/3 a string colour; ⌥1/2/3 a field colour.
