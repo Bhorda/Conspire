@@ -387,133 +387,41 @@ struct WhiteboardRootView: View {
                             // come back to: the note and field tools return
                             // here once they have made something, and so does
                             // Escape.
-                            Button {
+                            HandToolChip(isActive: store.placementMode == .hand) {
                                 store.enterHandMode()
-                            } label: {
-                                Image(systemName: "hand.raised")
-                                    .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                    .symbolVariant(store.placementMode == .hand ? .fill : .none)
-                                    .contentTransition(.symbolEffect)
-                                    .foregroundStyle(
-                                        store.placementMode == .hand
-                                            ? Color.primary
-                                            : Color.secondary.opacity(0.5)
-                                    )
-                                    .padding(.horizontal, 14)
-                                    .frame(height: WhiteboardStyle.toolbarChipHeight)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Hand — move and adjust anything, create nothing (Esc)")
-                            .glassEffect()
-                            .overlay(alignment: .top) {
-                                if store.placementMode == .hand {
-                                    Circle().fill(Color.white).frame(width: 4, height: 4).offset(y: -6)
-                                }
                             }
 
-                            HStack(spacing: 10) {
-                                Button{
-                                    store.pickNoteColour(0)
-                                } label: {
-                                    Image(systemName: "square.inset.filled")
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .symbolRenderingMode(.palette)
-                                        .contentTransition(.symbolEffect)
-                                        .foregroundStyle(store.noteColourPicked == 0 ? WhiteboardStyle.noteBackgrounds[0] : WhiteboardStyle.noteBackgrounds[0].opacity(0.2), WhiteboardStyle.noteBackgrounds[0])
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffectUnion(id: "notecolors", namespace: keyboardHints)
+                            ToolSwatchRow(
+                                symbols: .note,
+                                colours: WhiteboardStyle.noteBackgrounds,
+                                picked: store.noteColourPicked,
+                                isActive: store.placementMode == .note,
+                                help: "Note — click the canvas to place one (1 · 2 · 3)",
+                                unionID: "notecolors",
+                                namespace: keyboardHints
+                            ) { store.pickNoteColour($0) }
 
-                                Button{
-                                    store.pickNoteColour(1)
-                                } label: {
-                                    Image(systemName: "square.inset.filled")
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .symbolRenderingMode(.palette)
-                                        .contentTransition(.symbolEffect)
-                                        .foregroundStyle(store.noteColourPicked == 1 ? WhiteboardStyle.noteBackgrounds[1] : WhiteboardStyle.noteBackgrounds[1].opacity(0.2), WhiteboardStyle.noteBackgrounds[1])
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffectUnion(id: "notecolors", namespace: keyboardHints)
-
-                                Button{
-                                    store.pickNoteColour(2)
-                                } label: {
-                                    Image(systemName: "square.inset.filled")
-                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                        .symbolRenderingMode(.palette)
-                                        .contentTransition(.symbolEffect)
-                                        .foregroundStyle(store.noteColourPicked == 2 ? WhiteboardStyle.noteBackgrounds[2] : WhiteboardStyle.noteBackgrounds[2].opacity(0.2), WhiteboardStyle.noteBackgrounds[2])
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffectUnion(id: "notecolors", namespace: keyboardHints)
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: WhiteboardStyle.toolbarChipHeight)
-                            .glassEffect()
-                            .overlay(alignment: .top) {
-                                if store.placementMode == .note {
-                                    Circle().fill(Color.white).frame(width: 4, height: 4).offset(y: -6)
-                                }
-                            }
-
-                            HStack(spacing: 10) {
-                                ForEach(0..<3) { idx in
-                                    Button{
-                                        store.pickStringColour(idx)
-                                    } label: {
-                                        Image(systemName: "line.diagonal")
-                                            .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                            .symbolRenderingMode(.palette)
-                                            .contentTransition(.symbolEffect)
-                                            .foregroundStyle(
-                                                store.stringColourPicked == idx ? WhiteboardStyle.stringColors[idx] : WhiteboardStyle.stringColors[idx].opacity(0.2),
-                                                WhiteboardStyle.stringColors[idx]
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .glassEffectUnion(id: "stringcolors", namespace: keyboardHints)
-                                }
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: WhiteboardStyle.toolbarChipHeight)
-                            .glassEffect()
-                            .overlay(alignment: .top) {
-                                if store.placementMode == .string {
-                                    Circle().fill(Color.white).frame(width: 4, height: 4).offset(y: -6)
-                                }
-                            }
+                            ToolSwatchRow(
+                                symbols: .string,
+                                colours: WhiteboardStyle.stringColors,
+                                picked: store.stringColourPicked,
+                                isActive: store.placementMode == .string,
+                                help: "String — click two notes to link them (⌘1 · ⌘2 · ⌘3)",
+                                unionID: "stringcolors",
+                                namespace: keyboardHints
+                            ) { store.pickStringColour($0) }
 
                             // Picking a field colour takes up the pencil; picking a note
                             // or string colour puts it back down.
-                            HStack(spacing: 10) {
-                                ForEach(0..<WhiteboardStyle.fieldFills.count, id: \.self) { idx in
-                                    Button{
-                                        store.pickFieldColour(idx)
-                                    } label: {
-                                        Image(systemName: "circle.dashed.inset.filled")
-                                            .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
-                                            .symbolRenderingMode(.palette)
-                                            .contentTransition(.symbolEffect)
-                                            .foregroundStyle(
-                                                store.fieldColourPicked == idx ? WhiteboardStyle.fieldFills[idx] : WhiteboardStyle.fieldFills[idx].opacity(0.2),
-                                                WhiteboardStyle.fieldFills[idx]
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Draw a field")
-                                    .glassEffectUnion(id: "fieldcolors", namespace: keyboardHints)
-                                }
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: WhiteboardStyle.toolbarChipHeight)
-                            .glassEffect()
-                            .overlay(alignment: .top) {
-                                if store.placementMode == .field {
-                                    Circle().fill(Color.white).frame(width: 4, height: 4).offset(y: -6)
-                                }
-                            }
+                            ToolSwatchRow(
+                                symbols: .field,
+                                colours: WhiteboardStyle.fieldFills,
+                                picked: store.fieldColourPicked,
+                                isActive: store.placementMode == .field,
+                                help: "Field — drag to draw a zone (⌥1 · ⌥2 · ⌥3)",
+                                unionID: "fieldcolors",
+                                namespace: keyboardHints
+                            ) { store.pickFieldColour($0) }
 
                             Spacer()
                             
