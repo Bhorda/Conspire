@@ -31,6 +31,7 @@ struct ConspireApp: App {
                      BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
                      LinkEntity.self, FieldEntity.self,
                      ImageEntity.self, ImagePinEntity.self,
+                     ImageResourceEntity.self, TextResourceEntity.self,
                 configurations: configuration
             )
         } catch {

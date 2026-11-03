@@ -7,14 +7,20 @@ import CoreGraphics
 import Foundation
 import SwiftData
 
-/// An image on the canvas.
+/// One appearance of a picture on a board — a *placement*.
 ///
-/// `worldRect` is the whole of its position and size — images are not stacked
-/// or grouped, so there is no layout to derive. `displayPixelCap` records the
-/// long edge the display asset was built at, which is what tells us whether
-/// enlarging the image has outrun its pixels.
+/// `worldRect` is the whole of its position and size; images are not stacked or
+/// grouped, so there is no layout to derive. The picture itself belongs to the
+/// project as an `ImageResource`, which is what `resourceID` names, so two
+/// placements of the same photo share its bytes and its decode.
+///
+/// `nativePixelSize` and `displayPixelCap` are copies of the resource's, filled
+/// in when the board loads. The resource owns them — these are here so the
+/// geometry and the resample check can be answered without a lookup on every
+/// frame.
 struct ImageAsset: Identifiable, Equatable {
     let id: UUID
+    var resourceID: UUID
     var worldRect: CGRect
     var zOrder: Int
     /// Pixel size of the original, kept so a resample knows its ceiling.
@@ -25,6 +31,7 @@ struct ImageAsset: Identifiable, Equatable {
 
     init(
         id: UUID = UUID(),
+        resourceID: UUID = UUID(),
         worldRect: CGRect,
         zOrder: Int,
         nativePixelSize: CGSize,
@@ -33,6 +40,7 @@ struct ImageAsset: Identifiable, Equatable {
         updatedAt: Date = Date()
     ) {
         self.id = id
+        self.resourceID = resourceID
         self.worldRect = worldRect
         self.zOrder = zOrder
         self.nativePixelSize = nativePixelSize
@@ -103,8 +111,13 @@ extension ImageAsset {
 final class ImageEntity {
     @Attribute(.unique) var id: UUID
     var boardID: UUID
-    /// What the user imported, untouched, so a resample always has something
-    /// better to go back to than the asset currently on screen.
+    /// The picture this places. Optional so adding it stays a lightweight
+    /// migration: a row written before the library existed has nil here and
+    /// its own blobs below, and gets a resource minted from them on load.
+    var resourceID: UUID?
+    /// Legacy, pre-library. Read only by the migration and never written
+    /// again. Deliberately not cleared: duplicated bytes for a handful of old
+    /// rows is a better trade than any chance of losing them.
     @Attribute(.externalStorage) var originalData: Data
     /// Downscaled copy actually shown. Rebuilt by a resample.
     @Attribute(.externalStorage) var displayData: Data
@@ -122,8 +135,9 @@ final class ImageEntity {
     init(
         id: UUID = UUID(),
         boardID: UUID,
-        originalData: Data,
-        displayData: Data,
+        resourceID: UUID? = nil,
+        originalData: Data = Data(),
+        displayData: Data = Data(),
         x: Double,
         y: Double,
         width: Double,
@@ -137,6 +151,7 @@ final class ImageEntity {
     ) {
         self.id = id
         self.boardID = boardID
+        self.resourceID = resourceID
         self.originalData = originalData
         self.displayData = displayData
         self.x = x
@@ -153,12 +168,12 @@ final class ImageEntity {
 }
 
 extension ImageEntity {
-    convenience init(boardID: UUID, asset: ImageAsset, originalData: Data, displayData: Data) {
+    /// A placement of a resource. Carries no bytes — they live on the resource.
+    convenience init(boardID: UUID, asset: ImageAsset) {
         self.init(
             id: asset.id,
             boardID: boardID,
-            originalData: originalData,
-            displayData: displayData,
+            resourceID: asset.resourceID,
             x: asset.worldRect.origin.x,
             y: asset.worldRect.origin.y,
             width: asset.worldRect.width,
@@ -172,25 +187,31 @@ extension ImageEntity {
         )
     }
 
-    func toAsset() -> ImageAsset {
+    /// `resource` fills in the picture's own properties. Without it the
+    /// placement still reads back, using whatever the row last recorded, so a
+    /// resource that has gone does not take the geometry with it.
+    func toAsset(resource: ImageResource? = nil) -> ImageAsset {
         ImageAsset(
             id: id,
+            resourceID: resourceID ?? resource?.id ?? id,
             worldRect: CGRect(x: x, y: y, width: width, height: height),
             zOrder: zOrder,
-            nativePixelSize: CGSize(width: nativeWidth, height: nativeHeight),
-            displayPixelCap: displayPixelCap,
+            nativePixelSize: resource?.nativePixelSize
+                ?? CGSize(width: nativeWidth, height: nativeHeight),
+            displayPixelCap: resource?.displayPixelCap ?? displayPixelCap,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
     }
 
+    /// Geometry only. The bytes and the display cap belong to the resource.
     func apply(_ asset: ImageAsset) {
+        resourceID = asset.resourceID
         x = asset.worldRect.origin.x
         y = asset.worldRect.origin.y
         width = asset.worldRect.width
         height = asset.worldRect.height
         zOrder = asset.zOrder
-        displayPixelCap = asset.displayPixelCap
         updatedAt = asset.updatedAt
     }
 }

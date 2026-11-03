@@ -303,25 +303,40 @@ struct ImageLayerTests {
         let first = asset()
         let second = asset()
         let image = testCGImage()
+        let both = [first.resourceID: image, second.resourceID: image]
 
-        view.apply(
-            images: [first, second],
-            contents: [first.id: image, second.id: image],
-            pan: .zero, scale: 1
-        )
+        view.apply(images: [first, second], contents: both, pan: .zero, scale: 1)
         #expect(view.imageLayerCount == 2)
         let identity = view.imageLayerIdentity
 
         // A second pass with the same images must reuse the layers.
         view.apply(
-            images: [first, second],
-            contents: [first.id: image, second.id: image],
+            images: [first, second], contents: both,
             pan: CGSize(width: 40, height: 40), scale: 1.5
         )
         #expect(view.imageLayerIdentity == identity)
 
-        view.apply(images: [first], contents: [first.id: image], pan: .zero, scale: 1)
+        view.apply(images: [first], contents: [first.resourceID: image], pan: .zero, scale: 1)
         #expect(view.imageLayerCount == 1)
+    }
+
+    /// Contents are keyed by resource, so a picture placed twice is two layers
+    /// drawing one texture.
+    @Test func twoPlacementsOfOnePictureShareItsContents() {
+        let view = hostView()
+        let resourceID = UUID()
+        var first = asset()
+        var second = asset()
+        first.resourceID = resourceID
+        second.resourceID = resourceID
+        second.worldRect.origin = CGPoint(x: 900, y: 900)
+
+        view.apply(
+            images: [first, second],
+            contents: [resourceID: testCGImage()],
+            pan: .zero, scale: 1
+        )
+        #expect(view.imageLayerCount == 2)
     }
 
     @Test func anImageStillDecodingGetsNoLayer() {
@@ -338,27 +353,29 @@ struct ImageLayerTests {
         var sample = asset(cap: 400)
         let image = testCGImage()
 
-        view.apply(images: [sample], contents: [sample.id: image], pan: .zero, scale: 1)
+        view.apply(images: [sample], contents: [sample.resourceID: image], pan: .zero, scale: 1)
         #expect(view.renderedCap(for: sample.id) == 400)
 
         // Pan, zoom, move and resize: none of these is a new asset.
         sample.worldRect = CGRect(x: 900, y: 900, width: 800, height: 400)
         view.apply(
-            images: [sample], contents: [sample.id: image],
+            images: [sample], contents: [sample.resourceID: image],
             pan: CGSize(width: 120, height: -60), scale: 2.5
         )
         #expect(view.renderedCap(for: sample.id) == 400)
 
         // A resample is, and is the only thing that is.
         sample.displayPixelCap = 1600
-        view.apply(images: [sample], contents: [sample.id: image], pan: .zero, scale: 1)
+        view.apply(images: [sample], contents: [sample.resourceID: image], pan: .zero, scale: 1)
         #expect(view.renderedCap(for: sample.id) == 1600)
     }
 
     @Test func layerGeometryFollowsTheWorldRect() {
         let view = hostView()
         let sample = asset()
-        view.apply(images: [sample], contents: [sample.id: testCGImage()], pan: .zero, scale: 1)
+        view.apply(
+            images: [sample], contents: [sample.resourceID: testCGImage()], pan: .zero, scale: 1
+        )
         guard let frame = view.layerFrame(for: sample.id) else {
             Issue.record("no layer")
             return

@@ -84,9 +84,10 @@ final class ImageLayerHostView: NSView {
 
         var live = Set<UUID>()
         for asset in images {
-            // Decoding happens off the main actor; an image with no contents
-            // yet simply has no layer until it arrives.
-            guard let image = contents[asset.id] else { continue }
+            // Keyed by resource, so a picture placed on two boards is one
+            // texture. Decoding happens off the main actor; a placement with
+            // no contents yet simply has no layer until they arrive.
+            guard let image = contents[asset.resourceID] else { continue }
             live.insert(asset.id)
 
             let imageLayer = layers[asset.id] ?? makeLayer(for: asset.id)

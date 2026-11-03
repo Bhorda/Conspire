@@ -41,14 +41,27 @@ final class BoardEntity {
 @Model
 final class NoteEntity {
     @Attribute(.unique) var id: UUID
+    /// The note's own words. Ignored while `textResourceID` is set, where the
+    /// resource is the one source of truth — kept as the last words it showed,
+    /// so losing the resource does not blank the note.
     var text: String
     var colour: Int
+    /// Set when this note came from the text library. Optional so adding it
+    /// stays a lightweight migration.
+    var textResourceID: UUID?
     var board: BoardEntity?
 
-    init(id: UUID = UUID(), text: String = "", colour: Int = 0, board: BoardEntity? = nil) {
+    init(
+        id: UUID = UUID(),
+        text: String = "",
+        colour: Int = 0,
+        textResourceID: UUID? = nil,
+        board: BoardEntity? = nil
+    ) {
         self.id = id
         self.text = text
         self.colour = colour
+        self.textResourceID = textResourceID
         self.board = board
     }
 }

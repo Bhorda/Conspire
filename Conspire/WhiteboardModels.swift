@@ -8,8 +8,12 @@ import Foundation
 
 struct NoteRender: Identifiable, Equatable {
     let id: UUID
+    /// Already resolved: for a library note this is the resource's text, not
+    /// the row's own copy.
     let text: String
     let colour: Int
+    /// Set when the note came from the text library.
+    var textResourceID: UUID? = nil
 }
 
 struct NoteGroupRender: Identifiable, Equatable {

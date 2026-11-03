@@ -12,6 +12,8 @@ struct WhiteboardRootView: View {
     @StateObject private var store = WhiteboardStore()
     @StateObject private var persistence = WhiteboardPersistenceService()
     @AppStorage("isSidebarCollapsed") private var isSidebarCollapsed: Bool = true
+    @AppStorage("isLibraryCollapsed") private var isLibraryCollapsed: Bool = true
+    @AppStorage("libraryTab") private var libraryTab: LibraryTab = .images
     @AppStorage("showDebugHUD") private var showDebugHUD: Bool = false
     @State private var didBootstrap = false
     @State private var renameBoardID: UUID?
@@ -404,6 +406,22 @@ struct WhiteboardRootView: View {
                                 }
                                 
                                 Button {
+                                    withAnimation { isLibraryCollapsed.toggle() }
+                                } label: {
+                                    Image(systemName: "tray.full")
+                                        .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
+                                        .padding(12)
+                                        .contentShape(Rectangle())
+                                        .frame(
+                                            width: WhiteboardStyle.toolbarChipHeight,
+                                            height: WhiteboardStyle.toolbarChipHeight
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .help("Project library — drag text or images onto the board")
+                                .glassEffectUnion(id: "sidebar", namespace: keyboardHints)
+
+                                Button {
                                     withAnimation {
                                         isSidebarCollapsed.toggle()
                                     }
@@ -441,7 +459,16 @@ struct WhiteboardRootView: View {
                             .padding(24)
                             .padding(.bottom, 54)
                         }
-                        
+
+                        if !isLibraryCollapsed {
+                            LibraryPanelView(
+                                store: store,
+                                viewportSize: proxy.size,
+                                tab: $libraryTab
+                            )
+                            .padding(.bottom, 78)
+                        }
+
                         Spacer()
                     }
                 }
@@ -585,11 +612,23 @@ struct WhiteboardRootView: View {
                 }
             }
             .coordinateSpace(name: "root")
-            .dropDestination(for: URL.self) { urls, location in
-                store.importImages(
-                    from: urls.filter(\.isFileURL),
-                    atWorld: store.rootToWorld(location)
-                )
+            .dropDestination(for: CanvasDrop.self) { drops, location in
+                let world = store.rootToWorld(location)
+                var files: [URL] = []
+                for drop in drops {
+                    switch drop {
+                    case .file(let url) where url.isFileURL:
+                        files.append(url)
+                    case .file:
+                        break
+                    case .libraryItem(let payload):
+                        switch payload.kind {
+                        case .image: store.placeImageResource(payload.resourceID, atWorld: world)
+                        case .text: store.placeTextResource(payload.resourceID, atWorld: world)
+                        }
+                    }
+                }
+                if !files.isEmpty { store.importImages(from: files, atWorld: world) }
                 return true
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
@@ -621,6 +660,12 @@ struct WhiteboardRootView: View {
         }
         .onAppear {
             store.attachUndoManager(undoManager)
+            // Locating a use on another board switches to it, which needs the
+            // same reload as clicking it in the sidebar.
+            store.onBoardSwitched = {
+                syncStoreBoardMeta()
+                store.clearTransientStateForBoardSwitch()
+            }
             guard !didBootstrap else { return }
             didBootstrap = true
             store.persistence = persistence
@@ -648,6 +693,10 @@ struct WhiteboardRootView: View {
     private func syncStoreBoardMeta() {
         store.activeBoardID = persistence.activeBoardID
         store.activeBoardName = persistence.activeBoardName
+        // Resources are project-scoped, so the library loads before the board:
+        // placements are hydrated from the resources they point at.
+        store.activeProjectID = persistence.activeProjectID
+        store.loadLibraryForActiveProject()
         store.loadLinksForActiveBoard()
         store.loadFieldsForActiveBoard()
         store.loadImagesForActiveBoard()

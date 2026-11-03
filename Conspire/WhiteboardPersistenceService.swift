@@ -268,9 +268,15 @@ final class WhiteboardPersistenceService: ObservableObject {
     func boardCount() -> Int { boards.count }
 
     /// Creates a single note and a one-note group whose anchor is the world-space center of that note.
-    func createNote(atWorldCenter worldCenter: CGPoint, colour: Int) -> UUID? {
+    func createNote(
+        atWorldCenter worldCenter: CGPoint,
+        colour: Int,
+        textResourceID: UUID? = nil
+    ) -> UUID? {
         guard let context, let board = activeBoard() else { return nil }
-        let note = NoteEntity(text: "", colour: colour, board: board)
+        let note = NoteEntity(
+            text: "", colour: colour, textResourceID: textResourceID, board: board
+        )
         let noteID = note.id
         context.insert(note)
         board.notes.append(note)
@@ -321,7 +327,12 @@ final class WhiteboardPersistenceService: ObservableObject {
         let byID = Dictionary(uniqueKeysWithValues: board.notes.map { ($0.id, $0) })
         for srcID in sourceIDs {
             guard let src = byID[srcID] else { continue }
-            let clone = NoteEntity(text: src.text, colour: src.colour, board: board)
+            let clone = NoteEntity(
+                text: src.text,
+                colour: src.colour,
+                textResourceID: src.textResourceID,
+                board: board
+            )
             context.insert(clone)
             board.notes.append(clone)
             newIDs.append(clone.id)
@@ -334,10 +345,41 @@ final class WhiteboardPersistenceService: ObservableObject {
 
     func updateNoteText(noteID: UUID, text: String) {
         guard let board = activeBoard(), let note = board.notes.first(where: { $0.id == noteID }) else { return }
+        if let resourceID = note.textResourceID, let resource = textResourceEntity(id: resourceID) {
+            // A library note shows its resource's words, so this is the edit
+            // that reaches every board showing it. The row's own copy is kept
+            // in step as the last words it displayed.
+            resource.text = text
+            resource.updatedAt = .now
+        }
         note.text = text
         board.updatedAt = .now
         scheduleSave()
         refreshActiveBoardData()
+    }
+
+    func textResourceEntity(id: UUID) -> TextResourceEntity? {
+        guard let context else { return nil }
+        let target = id
+        let predicate = #Predicate<TextResourceEntity> { $0.id == target }
+        return try? context.fetch(FetchDescriptor<TextResourceEntity>(predicate: predicate)).first
+    }
+
+    /// Rebuilds the open board's render data. Needed when something off-board
+    /// changes what it shows — a text resource being edited or removed.
+    func refreshActiveBoard() {
+        refreshActiveBoardData()
+    }
+
+    /// A library note's words come from its resource, not from its own row.
+    private func resolvedTexts(for notes: [NoteEntity]) -> [UUID: String] {
+        guard let context else { return [:] }
+        let ids = Array(Set(notes.compactMap(\.textResourceID)))
+        guard !ids.isEmpty else { return [:] }
+        let rows = (try? context.fetch(FetchDescriptor<TextResourceEntity>(
+            predicate: #Predicate { ids.contains($0.id) }
+        ))) ?? []
+        return Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.text) })
     }
 
     func setCanvasPan(_ pan: CGSize) {
@@ -480,8 +522,19 @@ final class WhiteboardPersistenceService: ObservableObject {
         guard let board = activeBoard() else { return }
         activeCanvasPan = CGSize(width: board.canvasPanX, height: board.canvasPanY)
         activeCanvasScale = CGFloat(board.canvasScale)
+        let resolved = resolvedTexts(for: board.notes)
         activeNotesByID = Dictionary(
-            uniqueKeysWithValues: board.notes.map { ($0.id, NoteRender(id: $0.id, text: $0.text, colour: $0.colour)) }
+            uniqueKeysWithValues: board.notes.map { note in
+                (
+                    note.id,
+                    NoteRender(
+                        id: note.id,
+                        text: note.textResourceID.flatMap { resolved[$0] } ?? note.text,
+                        colour: note.colour,
+                        textResourceID: note.textResourceID
+                    )
+                )
+            }
         )
         activeGroups = board.groups
             .sorted {

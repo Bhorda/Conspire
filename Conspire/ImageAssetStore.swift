@@ -20,6 +20,9 @@ import UniformTypeIdentifiers
 struct PreparedImage: Sendable {
     let originalData: Data
     let displayData: Data
+    /// Small copy for the library grid, built here so the grid never has to
+    /// decode a full display asset.
+    let thumbnailData: Data
     let nativePixelSize: CGSize
     let displayPixelCap: Int
 }
@@ -29,6 +32,8 @@ enum ImageCodec {
     static let baseDisplayCap = 1024
     /// Hard ceiling for a resample, whatever the original's resolution.
     static let maxDisplayCap = 4096
+    /// Long edge of the library grid thumbnail.
+    static let thumbnailCap = 256
 
     /// Pixel size as it will be *shown*, i.e. with any EXIF quarter turn
     /// already accounted for. Reading the properties does not decode the image.
@@ -126,9 +131,13 @@ enum ImageCodec {
         guard let native = orientedPixelSize(of: originalData) else { return nil }
         let cap = baseCap(nativeLongEdge: max(native.width, native.height))
         guard let display = downscaled(originalData, longEdgeCap: cap) else { return nil }
+        // Built from the display asset rather than the original: it is already
+        // oriented and much cheaper to read a second time.
+        let thumbnail = downscaled(display.data, longEdgeCap: thumbnailCap)?.data
         return PreparedImage(
             originalData: originalData,
             displayData: display.data,
+            thumbnailData: thumbnail ?? display.data,
             nativePixelSize: native,
             displayPixelCap: cap
         )

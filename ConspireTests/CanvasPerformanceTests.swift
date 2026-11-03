@@ -20,6 +20,7 @@ private func makeBoard(notes: Int) throws -> (WhiteboardStore, WhiteboardPersist
              BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
              LinkEntity.self, FieldEntity.self,
              ImageEntity.self, ImagePinEntity.self,
+             ImageResourceEntity.self, TextResourceEntity.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     let service = WhiteboardPersistenceService()
@@ -172,7 +173,7 @@ struct ImagePerformanceTests {
                 displayPixelCap: 1024
             )
             images.append(asset)
-            contents[asset.id] = decoded
+            contents[asset.resourceID] = decoded
         }
 
         // First pass builds the layers and uploads the textures.

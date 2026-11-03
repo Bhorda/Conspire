@@ -23,25 +23,17 @@ enum ImageGesture {
     }
 }
 
-/// An imported image's bytes: what the user gave us, and what we draw.
-struct ImageBlobs {
-    let original: Data
-    let display: Data
-}
-
-/// Enough to put the images back as they were.
+/// Enough to put the placements back as they were.
 ///
-/// Pins and links come along because deleting an image takes its pins and
+/// Pins and links come along because deleting a placement takes its pins and
 /// every string attached to them; restoring the picture without the
-/// annotations would be worse than not restoring it at all. `blobs` carries
-/// bytes only for images the action removed, since restoring one of those
-/// means recreating an entity that no longer exists — a move or a resize needs
-/// no bytes.
+/// annotations would be worse than not restoring it at all. No bytes are
+/// needed any more — those belong to the resource, which a deleted placement
+/// does not take with it.
 struct ImageUndoState {
     var assets: [ImageAsset]
     var pins: [UUID: ImagePin]
     var links: [LinkID: Link]
-    var blobs: [UUID: ImageBlobs] = [:]
 }
 
 extension WhiteboardStore {
@@ -90,9 +82,10 @@ extension WhiteboardStore {
                 x: worldCenter.x + CGFloat(index) * 24,
                 y: worldCenter.y + CGFloat(index) * 24
             )
+            let name = url.deletingPathExtension().lastPathComponent
             Task { [weak self] in
                 guard let prepared = await ImageCodec.prepare(contentsOf: url) else { return }
-                self?.insertImage(prepared, atWorld: drop)
+                self?.insertImage(prepared, named: name, atWorld: drop)
             }
         }
     }
@@ -111,7 +104,7 @@ extension WhiteboardStore {
         }
         Task { [weak self] in
             guard let prepared = await ImageCodec.prepare(data: data) else { return }
-            self?.insertImage(prepared, atWorld: worldCenter)
+            self?.insertImage(prepared, named: "Pasted image", atWorld: worldCenter)
         }
     }
 
@@ -125,27 +118,11 @@ extension WhiteboardStore {
         importImages(from: panel.urls, atWorld: worldCenter)
     }
 
-    private func insertImage(_ prepared: PreparedImage, atWorld worldCenter: CGPoint) {
-        let before = imageUndoSnapshot()
-        let asset = ImageAsset(
-            worldRect: ImageAsset.importRect(
-                centeredAt: worldCenter,
-                pixelSize: prepared.nativePixelSize,
-                longEdge: WhiteboardStyle.imageImportLongEdge
-            ),
-            zOrder: (images.map(\.zOrder).max() ?? -1) + 1,
-            nativePixelSize: prepared.nativePixelSize,
-            displayPixelCap: prepared.displayPixelCap
-        )
-        images.append(asset)
-        imageContents[asset.id] = ImageCodec.decode(prepared.displayData)
-        insertImageEntity(
-            asset,
-            blobs: ImageBlobs(original: prepared.originalData, display: prepared.displayData)
-        )
-        selectedImageID = asset.id
-        registerImageUndo(before, actionName: "Add Image")
-        appendActionLog("image added")
+    /// An import is two things: a new picture in the project's library, and a
+    /// first placement of it on this board.
+    private func insertImage(_ prepared: PreparedImage, named name: String, atWorld worldCenter: CGPoint) {
+        guard let resource = addImageResource(prepared, name: name) else { return }
+        placeImageResource(resource.id, atWorld: worldCenter)
     }
 
     // MARK: - Gestures
@@ -244,21 +221,18 @@ extension WhiteboardStore {
         deleteImage(id)
     }
 
+    /// Removes one appearance of a picture. The picture stays in the library —
+    /// taking a placement off a board is not the same as throwing the photo
+    /// away, and the library has its own delete for that.
     func deleteImage(_ id: UUID) {
         guard images.contains(where: { $0.id == id }) else { return }
-        // The bytes have to be captured before the entity goes, or undo has
-        // nothing to restore the image from.
-        var before = imageUndoSnapshot()
-        if let blobs = imageBlobs(for: id) {
-            before.blobs[id] = blobs
-        }
+        let before = imageUndoSnapshot()
         removePins(forImage: id)
         images.removeAll { $0.id == id }
-        imageContents.removeValue(forKey: id)
         deleteImageEntity(id: id)
         if selectedImageID == id { selectedImageID = nil }
         registerImageUndo(before, actionName: "Delete Image")
-        appendActionLog("image deleted")
+        appendActionLog("image placement deleted")
     }
 
     // MARK: - Resample
@@ -281,29 +255,42 @@ extension WhiteboardStore {
     /// Rebuild the display asset from the original at the size the image is
     /// actually being shown. Deliberately manual: it is the one place the
     /// one-decode-per-image rule is allowed to be broken, and only on request.
+    /// Rebuild the picture's display asset from its original at the size it is
+    /// being shown. The *decision* comes from this placement, but the result
+    /// belongs to the resource, so every board showing the picture gets the
+    /// sharper version — which is right: the asset is what was short of pixels.
     func resampleImage(_ id: UUID) {
-        guard let asset = image(withID: id), let blobs = imageBlobs(for: id) else { return }
+        guard let asset = image(withID: id),
+              let entity = imageResourceEntity(id: asset.resourceID)
+        else { return }
+        let original = entity.originalData
         let cap = neededImageCap(for: asset)
         guard cap != asset.displayPixelCap else { return }
 
         Task { [weak self] in
             let rebuilt = await Task.detached(priority: .userInitiated) {
-                ImageCodec.downscaled(blobs.original, longEdgeCap: cap)
+                ImageCodec.downscaled(original, longEdgeCap: cap)
             }.value
             guard let rebuilt, let self else { return }
-            self.applyResampled(id: id, cap: cap, displayData: rebuilt.data)
+            self.applyResampled(resourceID: asset.resourceID, cap: cap, displayData: rebuilt.data)
         }
     }
 
-    private func applyResampled(id: UUID, cap: Int, displayData: Data) {
-        guard let index = images.firstIndex(where: { $0.id == id }) else { return }
-        images[index].displayPixelCap = cap
-        images[index].updatedAt = Date()
-        imageContents[id] = ImageCodec.decode(displayData)
-        if let entity = imageEntity(id: id) {
-            entity.displayData = displayData
-            entity.apply(images[index])
-            try? persistence?.context?.save()
+    private func applyResampled(resourceID: UUID, cap: Int, displayData: Data) {
+        guard let entity = imageResourceEntity(id: resourceID) else { return }
+        entity.displayData = displayData
+        entity.displayPixelCap = cap
+        entity.updatedAt = .now
+        try? persistence?.context?.save()
+
+        imageContents[resourceID] = ImageCodec.decode(displayData)
+        if let index = imageResources.firstIndex(where: { $0.id == resourceID }) {
+            imageResources[index].displayPixelCap = cap
+        }
+        // Every placement of this picture on the open board follows.
+        for index in images.indices where images[index].resourceID == resourceID {
+            images[index].displayPixelCap = cap
+            images[index].updatedAt = Date()
         }
         appendActionLog("image resampled to \(cap)px")
     }
@@ -317,14 +304,7 @@ extension WhiteboardStore {
     func registerImageUndo(_ stateToRestore: ImageUndoState, actionName: String) {
         guard let manager = undoManager else { return }
         manager.registerUndo(withTarget: self) { target in
-            var beforeThisUndo = target.imageUndoSnapshot()
-            // Anything this undo is about to remove needs its bytes kept, so
-            // the matching redo can bring it back.
-            for asset in target.images where !stateToRestore.assets.contains(where: { $0.id == asset.id }) {
-                if let blobs = target.imageBlobs(for: asset.id) {
-                    beforeThisUndo.blobs[asset.id] = blobs
-                }
-            }
+            let beforeThisUndo = target.imageUndoSnapshot()
             target.applyImageUndo(stateToRestore)
             target.registerImageUndo(beforeThisUndo, actionName: actionName)
         }
@@ -335,21 +315,14 @@ extension WhiteboardStore {
         images = state.assets
         pins = state.pins
         links = state.links
-        persistAllImages(restoring: state.blobs)
+        persistAllImages()
         persistAllPins()
         reconcileLinkEntities()
 
-        // Decode anything that came back from the dead, drop anything gone.
-        for asset in images where imageContents[asset.id] == nil {
-            if let blobs = state.blobs[asset.id] ?? imageBlobs(for: asset.id) {
-                imageContents[asset.id] = ImageCodec.decode(blobs.display)
-            }
-        }
-        let live = Set(images.map(\.id))
-        for id in imageContents.keys where !live.contains(id) {
-            imageContents.removeValue(forKey: id)
-        }
-        if let selected = selectedImageID, !live.contains(selected) {
+        // A placement restored by undo may be of a picture whose decode was
+        // dropped; the bytes are still on the resource either way.
+        for asset in images { ensureDecoded(asset.resourceID) }
+        if let selected = selectedImageID, !images.contains(where: { $0.id == selected }) {
             selectedImageID = nil
         }
     }
@@ -359,31 +332,82 @@ extension WhiteboardStore {
     func loadImagesForActiveBoard() {
         guard let context = persistence?.context, let boardID = activeBoardID else {
             images = []
-            imageContents = [:]
             return
         }
+        migrateImagePlacementsToResources()
+
         let predicate = #Predicate<ImageEntity> { $0.boardID == boardID }
         let entities = (try? context.fetch(FetchDescriptor<ImageEntity>(predicate: predicate))) ?? []
-        images = entities.map { $0.toAsset() }.sorted { $0.zOrder < $1.zOrder }
+        var byID: [UUID: ImageResource] = [:]
+        for resource in imageResources { byID[resource.id] = resource }
 
-        // One decode per image, off the main actor, so opening a board with a
-        // dozen pictures does not stall the first frame.
-        let payloads = entities.map { (id: $0.id, data: $0.displayData) }
-        imageContents = [:]
+        images = entities
+            .map { entity in entity.toAsset(resource: entity.resourceID.flatMap { byID[$0] }) }
+            .sorted { $0.zOrder < $1.zOrder }
+
+        // One decode per *picture*, off the main actor, so opening a board with
+        // a dozen of them does not stall the first frame — and a picture shown
+        // on two boards is only ever decoded once.
+        let wanted = Set(images.map(\.resourceID)).filter { imageContents[$0] == nil }
+        guard !wanted.isEmpty else { return }
+        let payloads = wanted.compactMap { id -> (UUID, Data)? in
+            guard let entity = imageResourceEntity(id: id) else { return nil }
+            return (id, entity.displayData)
+        }
         Task { [weak self] in
             let decoded = await Task.detached(priority: .userInitiated) {
                 payloads.compactMap { payload -> (UUID, CGImage)? in
-                    guard let image = ImageCodec.decode(payload.data) else { return nil }
-                    return (payload.id, image)
+                    guard let image = ImageCodec.decode(payload.1) else { return nil }
+                    return (payload.0, image)
                 }
             }.value
             guard let self else { return }
-            // The board may have changed while we were decoding.
-            let live = Set(self.images.map(\.id))
-            for (id, image) in decoded where live.contains(id) {
+            for (id, image) in decoded {
                 self.imageContents[id] = image
             }
         }
+    }
+
+    /// Placements written before the library existed carry their own bytes and
+    /// no resource. Each one gets a resource minted from those bytes.
+    ///
+    /// Idempotent, keyed on `resourceID == nil`. The resource is written and
+    /// saved *before* the placement is pointed at it, and the placement's
+    /// legacy blobs are never cleared — so an interruption at any point leaves
+    /// the bytes readable from at least one place, and a second run picks up
+    /// where it stopped.
+    func migrateImagePlacementsToResources() {
+        guard let context = persistence?.context, activeProjectID != nil else { return }
+        let stale = (try? context.fetch(
+            FetchDescriptor<ImageEntity>(predicate: #Predicate { $0.resourceID == nil })
+        )) ?? []
+        guard !stale.isEmpty else { return }
+
+        for placement in stale where !placement.displayData.isEmpty {
+            let prepared = PreparedImage(
+                originalData: placement.originalData.isEmpty
+                    ? placement.displayData
+                    : placement.originalData,
+                displayData: placement.displayData,
+                thumbnailData: ImageCodec.downscaled(
+                    placement.displayData, longEdgeCap: ImageCodec.thumbnailCap
+                )?.data ?? placement.displayData,
+                nativePixelSize: CGSize(
+                    width: placement.nativeWidth, height: placement.nativeHeight
+                ),
+                displayPixelCap: placement.displayPixelCap
+            )
+            guard let resource = addImageResource(prepared, name: "Image") else { continue }
+            placement.resourceID = resource.id
+            try? context.save()
+        }
+        appendActionLog("migrated \(stale.count) image placement(s) to the library")
+    }
+
+    func insertImagePlacement(_ asset: ImageAsset) {
+        guard let context = persistence?.context, let boardID = activeBoardID else { return }
+        context.insert(ImageEntity(boardID: boardID, asset: asset))
+        try? context.save()
     }
 
     func imageEntity(id: UUID) -> ImageEntity? {
@@ -393,25 +417,7 @@ extension WhiteboardStore {
         return try? context.fetch(FetchDescriptor<ImageEntity>(predicate: predicate)).first
     }
 
-    func imageBlobs(for id: UUID) -> ImageBlobs? {
-        guard let entity = imageEntity(id: id) else { return nil }
-        return ImageBlobs(original: entity.originalData, display: entity.displayData)
-    }
-
-    func insertImageEntity(_ asset: ImageAsset, blobs: ImageBlobs) {
-        guard let context = persistence?.context, let boardID = activeBoardID else { return }
-        context.insert(
-            ImageEntity(
-                boardID: boardID,
-                asset: asset,
-                originalData: blobs.original,
-                displayData: blobs.display
-            )
-        )
-        try? context.save()
-    }
-
-    /// Geometry only — the bytes never change outside import and resample.
+    /// Geometry only — the bytes belong to the resource.
     func persistImage(_ asset: ImageAsset) {
         guard let entity = imageEntity(id: asset.id) else { return }
         entity.apply(asset)
@@ -419,7 +425,9 @@ extension WhiteboardStore {
     }
 
     /// Reconciles the whole set after an undo replaced `images` wholesale.
-    func persistAllImages(restoring blobs: [UUID: ImageBlobs]) {
+    /// A placement can be recreated outright now — it is only a rect and a
+    /// resource id, so undoing a delete needs nothing that was thrown away.
+    func persistAllImages() {
         guard let context = persistence?.context, let boardID = activeBoardID else { return }
         let predicate = #Predicate<ImageEntity> { $0.boardID == boardID }
         let entities = (try? context.fetch(FetchDescriptor<ImageEntity>(predicate: predicate))) ?? []
@@ -433,15 +441,8 @@ extension WhiteboardStore {
         for asset in images {
             if let entity = existing[asset.id], !entity.isDeleted {
                 entity.apply(asset)
-            } else if let blobs = blobs[asset.id] {
-                context.insert(
-                    ImageEntity(
-                        boardID: boardID,
-                        asset: asset,
-                        originalData: blobs.original,
-                        displayData: blobs.display
-                    )
-                )
+            } else {
+                context.insert(ImageEntity(boardID: boardID, asset: asset))
             }
         }
         try? context.save()

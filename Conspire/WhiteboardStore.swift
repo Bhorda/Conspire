@@ -196,14 +196,26 @@ final class WhiteboardStore: ObservableObject {
 
     // MARK: - Images
     @Published var images: [ImageAsset] = []
-    /// Decoded display assets, one per image, handed straight to a `CALayer`.
-    /// This dictionary *is* the cache: one decode per image, filled on import,
-    /// on load, and on a resample.
+    /// Decoded display assets, keyed by **resource** id rather than placement,
+    /// so two boards showing the same picture share one decode and one texture.
+    /// This dictionary *is* the cache: one decode per picture, filled on
+    /// import, on load, and on a resample.
     @Published var imageContents: [UUID: CGImage] = [:]
     @Published var selectedImageID: UUID?
     @Published var hoveredImageID: UUID?
     var imageGesture: ImageGesture?
     var imageUndoBeforeGesture: ImageUndoState?
+
+    // MARK: - Library
+    /// The project the open board belongs to; resources are scoped to it.
+    @Published var activeProjectID: UUID?
+    @Published var imageResources: [ImageResource] = []
+    @Published var textResources: [TextResource] = []
+    /// Decoded 256px grid thumbnails, by resource id.
+    @Published var imageThumbnails: [UUID: CGImage] = [:]
+    /// Called after `locate` switches board, so the view can reload the rest of
+    /// the board's state the way it does for a sidebar click.
+    var onBoardSwitched: (() -> Void)?
 
     /// Pins: points on an image that strings attach to, by pin id.
     @Published var pins: [UUID: ImagePin] = [:]

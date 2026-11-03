@@ -54,6 +54,19 @@ struct NoteCardView: View {
         return store.noteFieldChips[entry.noteID] ?? []
     }
 
+    /// Marks a note whose words come from the text library, because editing it
+    /// changes every board showing that item — worth knowing before you type.
+    @ViewBuilder
+    private var libraryChip: some View {
+        if isBoardStackEntry, entry.isTop,
+           store.activeNotesByID[entry.noteID]?.textResourceID != nil {
+            Image(systemName: "tray.full.fill")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(.black.opacity(0.4))
+                .help("From the project library — editing this changes it everywhere")
+        }
+    }
+
     @ViewBuilder
     private var fieldChips: some View {
         let fields = containingFields
@@ -178,6 +191,7 @@ struct NoteCardView: View {
                 HStack {
                     fieldChips
                     Spacer()
+                    libraryChip
                 }
                 Spacer()
             }
