@@ -10,6 +10,9 @@ import SwiftData
 
 @MainActor
 final class WhiteboardPersistenceService: ObservableObject {
+    @Published private(set) var projects: [ProjectSummary] = []
+    @Published private(set) var activeProjectID: UUID?
+    @Published private(set) var activeProjectName: String = ""
     @Published private(set) var boards: [BoardSummary] = []
     @Published private(set) var activeBoardID: UUID?
     @Published private(set) var activeBoardName: String = ""
@@ -31,7 +34,7 @@ final class WhiteboardPersistenceService: ObservableObject {
 
     func configure(context: ModelContext) {
         self.context = context
-        refreshBoards()
+        refreshProjects()
     }
 
     func flushPendingSaves() {
@@ -43,8 +46,15 @@ final class WhiteboardPersistenceService: ObservableObject {
 
     func bootstrap() {
         guard let context else { return }
-        if boards.isEmpty {
-            context.insert(BoardEntity(name: "Untitled"))
+        adoptProjectlessBoards()
+
+        if activeProjectID == nil, let project = fetchMostRecentProject() {
+            setActiveProject(project)
+        }
+        refreshBoards()
+
+        if boards.isEmpty, let projectID = activeProjectID {
+            context.insert(BoardEntity(name: "Untitled", projectID: projectID))
             try? context.save()
             refreshBoards()
         }
@@ -53,9 +63,164 @@ final class WhiteboardPersistenceService: ObservableObject {
         }
     }
 
-    func createBoard() {
+    // MARK: - Projects
+
+    /// Boards written before projects existed have no project. They are all
+    /// adopted by one, created if there is none.
+    ///
+    /// Idempotent and keyed on `projectID == nil`, so running it again does
+    /// nothing, and it only ever *adds* a reference — no board is moved,
+    /// renamed or removed.
+    private func adoptProjectlessBoards() {
         guard let context else { return }
-        let board = BoardEntity(name: nextUntitledName())
+        let orphans = (try? context.fetch(
+            FetchDescriptor<BoardEntity>(predicate: #Predicate { $0.projectID == nil })
+        )) ?? []
+
+        let project = fetchMostRecentProject() ?? insertProject(named: "My Project")
+        setActiveProject(project)
+        guard !orphans.isEmpty else {
+            refreshProjects()
+            return
+        }
+        for board in orphans {
+            board.projectID = project.id
+        }
+        try? context.save()
+        refreshProjects()
+    }
+
+    private func insertProject(named name: String) -> ProjectEntity {
+        let project = ProjectEntity(name: name)
+        context?.insert(project)
+        try? context?.save()
+        return project
+    }
+
+    private func setActiveProject(_ project: ProjectEntity) {
+        activeProjectID = project.id
+        activeProjectName = project.name
+    }
+
+    func createProject() {
+        guard let context else { return }
+        let project = insertProject(named: nextUntitledName(among: projects.map(\.name), stem: "Project"))
+        setActiveProject(project)
+        // A project with no boards has nothing to show, so it starts with one.
+        context.insert(BoardEntity(name: "Untitled", projectID: project.id))
+        try? context.save()
+        refreshProjects()
+        refreshBoards()
+        if let board = fetchMostRecentBoard() { selectBoard(id: board.id) }
+    }
+
+    func selectProject(id: UUID) {
+        guard id != activeProjectID, let project = fetchProject(id: id) else { return }
+        flushPendingSaves()
+        project.lastOpenedAt = .now
+        project.updatedAt = .now
+        setActiveProject(project)
+        invalidateBoardCache()
+        activeBoardID = nil
+        try? context?.save()
+        refreshProjects()
+        refreshBoards()
+        if let board = fetchMostRecentBoard() { selectBoard(id: board.id) }
+    }
+
+    func renameProject(id: UUID, name: String) {
+        guard let project = fetchProject(id: id) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        project.name = trimmed.isEmpty ? project.name : String(trimmed.prefix(64))
+        project.updatedAt = .now
+        try? context?.save()
+        if activeProjectID == id { activeProjectName = project.name }
+        refreshProjects()
+    }
+
+    /// Boards in a project go with it, and so does everything scoped to those
+    /// boards. Refuses to remove the last project.
+    func deleteProject(id: UUID) {
+        guard let context, projects.count > 1, let project = fetchProject(id: id) else { return }
+        let wasActive = activeProjectID == id
+        for board in boards(inProject: id) {
+            purgeBoardScopedEntities(boardID: board.id)
+            context.delete(board)
+        }
+        context.delete(project)
+        try? context.save()
+        invalidateBoardCache()
+        refreshProjects()
+
+        if wasActive {
+            activeProjectID = nil
+            activeProjectName = ""
+            activeBoardID = nil
+            if let next = fetchMostRecentProject() { setActiveProject(next) }
+            refreshBoards()
+            if let board = fetchMostRecentBoard() { selectBoard(id: board.id) }
+        }
+    }
+
+    func projectCount() -> Int { projects.count }
+
+    private func fetchProject(id: UUID) -> ProjectEntity? {
+        guard let context else { return nil }
+        let predicate = #Predicate<ProjectEntity> { $0.id == id }
+        return try? context.fetch(FetchDescriptor<ProjectEntity>(predicate: predicate)).first
+    }
+
+    private func fetchMostRecentProject() -> ProjectEntity? {
+        guard let context else { return nil }
+        return try? context.fetch(
+            FetchDescriptor<ProjectEntity>(sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)])
+        ).first
+    }
+
+    private func boards(inProject projectID: UUID) -> [BoardEntity] {
+        guard let context else { return [] }
+        let predicate = #Predicate<BoardEntity> { $0.projectID == projectID }
+        return (try? context.fetch(FetchDescriptor<BoardEntity>(predicate: predicate))) ?? []
+    }
+
+    private func refreshProjects() {
+        guard let context else { return }
+        let list = (try? context.fetch(
+            FetchDescriptor<ProjectEntity>(sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)])
+        )) ?? []
+        projects = list.map { project in
+            ProjectSummary(
+                id: project.id,
+                name: project.name,
+                lastOpenedAt: project.lastOpenedAt,
+                boardCount: boards(inProject: project.id).count
+            )
+        }
+    }
+
+    /// Fields, links, images and pins are scoped by `boardID` rather than by a
+    /// SwiftData relationship, so deleting a board does not cascade to them.
+    /// Without this they accumulate forever, invisible.
+    private func purgeBoardScopedEntities(boardID: UUID) {
+        guard let context else { return }
+        let target = boardID
+        for entity in (try? context.fetch(
+            FetchDescriptor<FieldEntity>(predicate: #Predicate { $0.boardID == target })
+        )) ?? [] { context.delete(entity) }
+        for entity in (try? context.fetch(
+            FetchDescriptor<LinkEntity>(predicate: #Predicate { $0.boardID == target })
+        )) ?? [] { context.delete(entity) }
+        for entity in (try? context.fetch(
+            FetchDescriptor<ImageEntity>(predicate: #Predicate { $0.boardID == target })
+        )) ?? [] { context.delete(entity) }
+        for entity in (try? context.fetch(
+            FetchDescriptor<ImagePinEntity>(predicate: #Predicate { $0.boardID == target })
+        )) ?? [] { context.delete(entity) }
+    }
+
+    func createBoard() {
+        guard let context, let projectID = activeProjectID else { return }
+        let board = BoardEntity(name: nextUntitledName(), projectID: projectID)
         context.insert(board)
         try? context.save()
         refreshBoards()
@@ -77,6 +242,7 @@ final class WhiteboardPersistenceService: ObservableObject {
         guard boards.count > 1 else { return }
         let wasActive = activeBoardID == id
         if let board = fetchBoard(id: id) {
+            purgeBoardScopedEntities(boardID: board.id)
             context.delete(board)
             try? context.save()
         }
@@ -271,8 +437,13 @@ final class WhiteboardPersistenceService: ObservableObject {
     }
 
     private func fetchMostRecentBoard() -> BoardEntity? {
-        guard let context else { return nil }
-        return try? context.fetch(FetchDescriptor<BoardEntity>(sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)])).first
+        guard let context, let projectID = activeProjectID else { return nil }
+        var descriptor = FetchDescriptor<BoardEntity>(
+            predicate: #Predicate { $0.projectID == projectID },
+            sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 
     private func activeBoard() -> BoardEntity? {
@@ -292,8 +463,14 @@ final class WhiteboardPersistenceService: ObservableObject {
     }
 
     private func refreshBoards() {
-        guard let context else { return }
-        let list = (try? context.fetch(FetchDescriptor<BoardEntity>(sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)]))) ?? []
+        guard let context, let projectID = activeProjectID else {
+            boards = []
+            return
+        }
+        let list = (try? context.fetch(FetchDescriptor<BoardEntity>(
+            predicate: #Predicate { $0.projectID == projectID },
+            sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)]
+        ))) ?? []
         boards = list.map {
             BoardSummary(id: $0.id, name: $0.name, lastOpenedAt: $0.lastOpenedAt, noteCount: $0.notes.count)
         }
@@ -323,11 +500,15 @@ final class WhiteboardPersistenceService: ObservableObject {
     }
 
     private func nextUntitledName() -> String {
-        let names = Set(boards.map(\.name))
-        if !names.contains("Untitled") { return "Untitled" }
+        nextUntitledName(among: boards.map(\.name), stem: "Untitled")
+    }
+
+    private func nextUntitledName(among existing: [String], stem: String) -> String {
+        let names = Set(existing)
+        if !names.contains(stem) { return stem }
         var i = 2
-        while names.contains("Untitled \(i)") { i += 1 }
-        return "Untitled \(i)"
+        while names.contains("\(stem) \(i)") { i += 1 }
+        return "\(stem) \(i)"
     }
 
     private func scheduleSave(delayNs: UInt64 = 300_000_000) {

@@ -16,12 +16,17 @@ final class BoardEntity {
     var canvasPanX: Double
     var canvasPanY: Double
     var canvasScale: Double
+    /// Optional so adding it stays a lightweight migration. A board written
+    /// before projects existed has nil here and is adopted by the first
+    /// project on load.
+    var projectID: UUID?
     @Relationship(deleteRule: .cascade, inverse: \NoteEntity.board) var notes: [NoteEntity]
     @Relationship(deleteRule: .cascade, inverse: \NoteGroupEntity.board) var groups: [NoteGroupEntity]
 
-    init(id: UUID = UUID(), name: String) {
+    init(id: UUID = UUID(), name: String, projectID: UUID? = nil) {
         self.id = id
         self.name = name
+        self.projectID = projectID
         self.createdAt = .now
         self.updatedAt = .now
         self.lastOpenedAt = .now

@@ -18,6 +18,9 @@ struct WhiteboardRootView: View {
     @State private var renameDraft: String = ""
     @State private var pendingDeleteBoardID: UUID?
     @State private var pendingDeleteBoardName: String = ""
+    @State private var isRenamingProject = false
+    @State private var projectRenameDraft: String = ""
+    @State private var isConfirmingProjectDelete = false
     
     @State private var shiftHeld = false
     @State private var commandHeld = false
@@ -63,6 +66,83 @@ struct WhiteboardRootView: View {
                 )
                 // A pinned end tracks its picture exactly; see `Link.touchesPin`.
                 .animation(link.touchesPin ? nil : WhiteboardStyle.notePlacementAnimation, value: curve)
+        }
+    }
+
+    /// The project switcher. It takes the place of the panel's old static
+    /// "Whiteboards" title so the panel keeps its size: a 260pt panel with a
+    /// 260pt-tall list has no room for nested disclosure groups.
+    private var projectMenu: some View {
+        Menu {
+            ForEach(persistence.projects) { project in
+                Button {
+                    commitPendingRenameIfNeeded()
+                    persistence.selectProject(id: project.id)
+                    syncStoreBoardMeta()
+                    store.clearTransientStateForBoardSwitch()
+                } label: {
+                    if project.id == persistence.activeProjectID {
+                        Label(project.name, systemImage: "checkmark")
+                    } else {
+                        Text(project.name)
+                    }
+                }
+            }
+            Divider()
+            Button("New Project") {
+                commitPendingRenameIfNeeded()
+                persistence.createProject()
+                syncStoreBoardMeta()
+                store.clearTransientStateForBoardSwitch()
+            }
+            Button("Rename Project…") {
+                projectRenameDraft = persistence.activeProjectName
+                isRenamingProject = true
+            }
+            if persistence.projectCount() > 1 {
+                Button("Delete Project…", role: .destructive) {
+                    isConfirmingProjectDelete = true
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(persistence.activeProjectName.isEmpty ? "Project" : persistence.activeProjectName)
+                    .font(.headline)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .alert("Rename project", isPresented: $isRenamingProject) {
+            TextField("Name", text: $projectRenameDraft)
+            Button("Rename") {
+                if let id = persistence.activeProjectID {
+                    persistence.renameProject(id: id, name: projectRenameDraft)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Delete \"\(persistence.activeProjectName)\"?",
+            isPresented: $isConfirmingProjectDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = persistence.activeProjectID {
+                    persistence.deleteProject(id: id)
+                    syncStoreBoardMeta()
+                    store.clearTransientStateForBoardSwitch()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let count = persistence.projects
+                .first { $0.id == persistence.activeProjectID }?.boardCount ?? 0
+            Text("This removes the project and its \(count) board\(count == 1 ? "" : "s"), with everything on them. This action cannot be undone.")
         }
     }
 
@@ -249,7 +329,7 @@ struct WhiteboardRootView: View {
                                 if !isSidebarCollapsed {
                                     VStack(alignment: .leading, spacing: 8) {
                                         HStack {
-                                            Text("Whiteboards").font(.headline)
+                                            projectMenu
                                             Spacer()
                                             Button {
                                                 commitPendingRenameIfNeeded()
@@ -258,6 +338,7 @@ struct WhiteboardRootView: View {
                                                 store.clearTransientStateForBoardSwitch()
                                             } label: { Image(systemName: "plus") }
                                             .buttonStyle(.plain)
+                                            .help("New board in this project")
                                         }
                                         ScrollView {
                                             VStack(alignment: .leading, spacing: 6) {

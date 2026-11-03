@@ -16,7 +16,8 @@ import Testing
 @MainActor
 private func makeBoard(notes: Int) throws -> (WhiteboardStore, WhiteboardPersistenceService) {
     let container = try ModelContainer(
-        for: BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
+        for: ProjectEntity.self,
+             BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
              LinkEntity.self, FieldEntity.self,
              ImageEntity.self, ImagePinEntity.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)

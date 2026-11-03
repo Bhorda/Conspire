@@ -27,7 +27,8 @@ struct ConspireApp: App {
         )
         do {
             return try ModelContainer(
-                for: BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
+                for: ProjectEntity.self,
+                     BoardEntity.self, NoteEntity.self, NoteGroupEntity.self,
                      LinkEntity.self, FieldEntity.self,
                      ImageEntity.self, ImagePinEntity.self,
                 configurations: configuration
