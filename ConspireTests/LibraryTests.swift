@@ -337,15 +337,20 @@ struct TextLibraryTests {
         #expect(temp.store.textResourceEntity(id: resource.id)?.text == "Trust & safety")
     }
 
-    @Test func editingAnOrdinaryNoteTouchesNoResource() throws {
+    /// Typing in a note gets that note its own item, and leaves every other
+    /// item alone.
+    @Test func typingInANoteDoesNotDisturbOtherItems() throws {
         let temp = try TemporaryStore()
-        let resource = temp.store.addTextResource("Trust")!
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let other = temp.store.addTextResource("Trust")!
         let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
 
         temp.service.updateNoteText(noteID: noteID, text: "something else")
 
-        #expect(temp.store.textResourceEntity(id: resource.id)?.text == "Trust")
-        #expect(temp.service.activeNotesByID[noteID]?.textResourceID == nil)
+        #expect(temp.store.textResourceEntity(id: other.id)?.text == "Trust")
+        let mine = temp.service.activeNotesByID[noteID]?.textResourceID
+        #expect(mine != nil)
+        #expect(mine != other.id)
     }
 
     /// Removing a library item must not quietly empty notes on boards the user
@@ -387,6 +392,162 @@ struct TextLibraryTests {
         #expect(clones.count == 1)
         #expect(temp.service.activeNotesByID[clones[0]]?.textResourceID == resource.id)
         #expect(temp.service.activeNotesByID[clones[0]]?.text == "Code")
+    }
+
+    // MARK: - Every note is a library item
+
+    @Test func aNoteJoinsTheLibraryAsSoonAsItHasText() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+
+        // Born empty, so nothing in the library yet: blank entries would be
+        // worse than useless.
+        #expect(temp.store.textResources.isEmpty)
+        #expect(temp.service.activeNotesByID[noteID]?.textResourceID == nil)
+
+        temp.service.updateNoteText(noteID: noteID, text: "Trust & safety")
+
+        #expect(temp.store.textResources.count == 1)
+        #expect(temp.store.textResources[0].text == "Trust & safety")
+        #expect(temp.service.activeNotesByID[noteID]?.textResourceID != nil)
+    }
+
+    @Test func aWhitespaceOnlyNoteDoesNotJoin() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+
+        temp.service.updateNoteText(noteID: noteID, text: "   \n  ")
+
+        #expect(temp.store.textResources.isEmpty)
+    }
+
+    @Test func laterEditsGoToTheSameItemRatherThanMakingMore() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        temp.service.onTextResourceEdited = { temp.store.noteTextResourceEdited($0, text: $1) }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+
+        temp.service.updateNoteText(noteID: noteID, text: "T")
+        let resourceID = temp.store.textResources[0].id
+        temp.service.updateNoteText(noteID: noteID, text: "Trust")
+        temp.service.updateNoteText(noteID: noteID, text: "Trust & safety")
+
+        #expect(temp.store.textResources.count == 1)
+        #expect(temp.store.textResources[0].id == resourceID)
+        #expect(temp.store.textResources[0].text == "Trust & safety")
+    }
+
+    /// Two notes that happen to say the same thing are *not* linked. Linking
+    /// them would mean an edit to one silently rewriting the other.
+    @Test func twoNotesWithTheSameWordsStayIndependent() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let first = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        let second = temp.service.createNote(atWorldCenter: CGPoint(x: 400, y: 0), colour: 0)!
+
+        temp.service.updateNoteText(noteID: first, text: "TODO")
+        temp.service.updateNoteText(noteID: second, text: "TODO")
+        #expect(temp.store.textResources.count == 2)
+
+        temp.service.updateNoteText(noteID: first, text: "TODO later")
+
+        #expect(temp.service.activeNotesByID[second]?.text == "TODO")
+    }
+
+    @Test func existingNotesAreAdoptedOnLoad() throws {
+        let temp = try TemporaryStore()
+        let context = temp.service.context!
+        let board = (try context.fetch(FetchDescriptor<BoardEntity>())).first!
+        for text in ["Trust", "Safety", ""] {
+            let note = NoteEntity(text: text, colour: 0, board: board)
+            context.insert(note)
+            board.notes.append(note)
+        }
+        try context.save()
+
+        temp.store.loadLibraryForActiveProject()
+
+        // The two with words joined; the empty one did not.
+        #expect(temp.store.textResources.count == 2)
+        #expect(Set(temp.store.textResources.map(\.text)) == ["Trust", "Safety"])
+    }
+
+    @Test func adoptingNotesOnLoadIsIdempotent() throws {
+        let temp = try TemporaryStore()
+        let context = temp.service.context!
+        let board = (try context.fetch(FetchDescriptor<BoardEntity>())).first!
+        let note = NoteEntity(text: "Trust", colour: 0, board: board)
+        context.insert(note)
+        board.notes.append(note)
+        try context.save()
+
+        temp.store.loadLibraryForActiveProject()
+        let ids = temp.store.textResources.map(\.id)
+        temp.store.loadLibraryForActiveProject()
+        temp.store.loadLibraryForActiveProject()
+
+        #expect(temp.store.textResources.map(\.id) == ids)
+        #expect(try context.fetch(FetchDescriptor<TextResourceEntity>()).count == 1)
+    }
+
+    @Test func adoptionNeverChangesWhatANoteSays() throws {
+        let temp = try TemporaryStore()
+        let context = temp.service.context!
+        let board = (try context.fetch(FetchDescriptor<BoardEntity>())).first!
+        let note = NoteEntity(text: "Exactly these words", colour: 2, board: board)
+        context.insert(note)
+        board.notes.append(note)
+        try context.save()
+
+        temp.store.loadLibraryForActiveProject()
+
+        #expect(temp.service.activeNotesByID[note.id]?.text == "Exactly these words")
+        #expect(temp.service.activeNotesByID[note.id]?.colour == 2)
+    }
+
+    // MARK: - The chip only when sharing is real
+
+    @Test func aNoteOnItsOwnIsNotMarkedAsShared() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.service.updateNoteText(noteID: noteID, text: "Trust")
+
+        let resourceID = temp.service.activeNotesByID[noteID]?.textResourceID
+        #expect(temp.store.textUseCount(resourceID!) == 1)
+        // Every note is an item, so a badge on all of them would say nothing.
+        #expect(!temp.store.noteIsSharedWithAnotherPlace(resourceID))
+    }
+
+    @Test func aNoteUsedTwiceIsMarkedAsShared() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.service.updateNoteText(noteID: noteID, text: "Trust")
+        let resourceID = temp.service.activeNotesByID[noteID]!.textResourceID!
+
+        temp.store.placeTextResource(resourceID, atWorld: CGPoint(x: 500, y: 0))
+
+        #expect(temp.store.textUseCount(resourceID) == 2)
+        #expect(temp.store.noteIsSharedWithAnotherPlace(resourceID))
+    }
+
+    @Test func deletingOneOfTwoSharedNotesDropsTheCount() throws {
+        let temp = try TemporaryStore()
+        temp.service.onLibraryChanged = { temp.store.reloadTextResources() }
+        let noteID = temp.service.createNote(atWorldCenter: .zero, colour: 0)!
+        temp.service.updateNoteText(noteID: noteID, text: "Trust")
+        let resourceID = temp.service.activeNotesByID[noteID]!.textResourceID!
+        temp.store.placeTextResource(resourceID, atWorld: CGPoint(x: 500, y: 0))
+        #expect(temp.store.textUseCount(resourceID) == 2)
+
+        temp.service.deleteNotes([noteID])
+
+        #expect(temp.store.textUseCount(resourceID) == 1)
+        // The item itself stays — removing a note is not removing the code.
+        #expect(temp.store.textResources.count == 1)
     }
 
     @Test func resourcesAreScopedToTheirProject() throws {

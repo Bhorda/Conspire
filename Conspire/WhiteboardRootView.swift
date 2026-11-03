@@ -666,6 +666,12 @@ struct WhiteboardRootView: View {
                 syncStoreBoardMeta()
                 store.clearTransientStateForBoardSwitch()
             }
+            // A note joining the library, or being duplicated or deleted,
+            // changes the library from the persistence side.
+            persistence.onLibraryChanged = { store.reloadTextResources() }
+            persistence.onTextResourceEdited = { id, text in
+                store.noteTextResourceEdited(id, text: text)
+            }
             guard !didBootstrap else { return }
             didBootstrap = true
             store.persistence = persistence

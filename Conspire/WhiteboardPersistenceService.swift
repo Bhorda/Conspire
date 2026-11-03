@@ -22,6 +22,22 @@ final class WhiteboardPersistenceService: ObservableObject {
     @Published private(set) var activeGroups: [NoteGroupRender] = []
 
     var context: ModelContext?
+    /// Fired when the set of library items changes from this side — a note
+    /// joining the library, or notes being duplicated or deleted. The store
+    /// owns the library lists, so it reloads them rather than guessing.
+    var onLibraryChanged: (() -> Void)?
+    /// Fired when a library item's *words* change, which happens on every
+    /// keystroke in a note. Deliberately separate from `onLibraryChanged`: the
+    /// set of items has not moved, so there is nothing to re-fetch and the
+    /// store can patch the one entry it already holds.
+    var onTextResourceEdited: ((UUID, String) -> Void)?
+    /// Every library item's words, by id, kept current by the store.
+    ///
+    /// A note's words come from its library item, and `refreshActiveBoardData`
+    /// runs on every keystroke — resolving that with a fetch each time cost
+    /// ~2ms per keypress with 60 notes, and would grow. This is the same
+    /// in-memory set the library panel already holds.
+    var textResourceLookup: [UUID: String] = [:]
     private var saveTask: Task<Void, Never>?
     /// Pan/scale arrive once per scroll event. Writing them through to SwiftData
     /// each time cost a fetch and a published change per event, so they are held
@@ -340,22 +356,74 @@ final class WhiteboardPersistenceService: ObservableObject {
         board.updatedAt = .now
         scheduleSave()
         refreshActiveBoardData()
+        // A duplicate shares its source's library item, so a count went up.
+        onLibraryChanged?()
         return newIDs
     }
 
     func updateNoteText(noteID: UUID, text: String) {
         guard let board = activeBoard(), let note = board.notes.first(where: { $0.id == noteID }) else { return }
+
         if let resourceID = note.textResourceID, let resource = textResourceEntity(id: resourceID) {
-            // A library note shows its resource's words, so this is the edit
-            // that reaches every board showing it. The row's own copy is kept
-            // in step as the last words it displayed.
+            // A note's words live on its library item, so this is the edit that
+            // reaches every board showing it. The row's own copy is kept in
+            // step as the last words it displayed.
             resource.text = text
             resource.updatedAt = .now
+            onTextResourceEdited?(resourceID, text)
+        } else if adoptNoteIntoLibrary(note, text: text) != nil {
+            onLibraryChanged?()
         }
+
         note.text = text
         board.updatedAt = .now
         scheduleSave()
         refreshActiveBoardData()
+    }
+
+    /// Every note is a library item, so a note joins the library the moment it
+    /// has something to say.
+    ///
+    /// Deliberately on first text rather than on creation: a note is born
+    /// empty, and a library full of blank entries is worse than useless. And
+    /// deliberately a *new* item each time rather than matching an existing one
+    /// by text — linking two notes means an edit to one silently rewrites the
+    /// other, which is not something to do to a note the user did not ask about.
+    @discardableResult
+    private func adoptNoteIntoLibrary(_ note: NoteEntity, text: String) -> TextResourceEntity? {
+        guard let context,
+              let projectID = note.board?.projectID,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        let resource = TextResourceEntity(projectID: projectID, text: text)
+        context.insert(resource)
+        note.textResourceID = resource.id
+        return resource
+    }
+
+    /// Notes written before the library existed join it on load.
+    ///
+    /// Idempotent, keyed on `textResourceID` being nil, and only ever *adds* —
+    /// a note's own text is never changed, so the worst a failed run can do is
+    /// leave a note out of the library until the next one.
+    @discardableResult
+    func adoptNotesIntoLibrary() -> Int {
+        guard let context, let projectID = activeProjectID else { return 0 }
+        let boards = (try? context.fetch(
+            FetchDescriptor<BoardEntity>(predicate: #Predicate { $0.projectID == projectID })
+        )) ?? []
+
+        var adopted = 0
+        for board in boards {
+            for note in board.notes where note.textResourceID == nil {
+                if adoptNoteIntoLibrary(note, text: note.text) != nil { adopted += 1 }
+            }
+        }
+        guard adopted > 0 else { return 0 }
+        try? context.save()
+        refreshActiveBoardData()
+        onLibraryChanged?()
+        return adopted
     }
 
     func textResourceEntity(id: UUID) -> TextResourceEntity? {
@@ -371,16 +439,7 @@ final class WhiteboardPersistenceService: ObservableObject {
         refreshActiveBoardData()
     }
 
-    /// A library note's words come from its resource, not from its own row.
-    private func resolvedTexts(for notes: [NoteEntity]) -> [UUID: String] {
-        guard let context else { return [:] }
-        let ids = Array(Set(notes.compactMap(\.textResourceID)))
-        guard !ids.isEmpty else { return [:] }
-        let rows = (try? context.fetch(FetchDescriptor<TextResourceEntity>(
-            predicate: #Predicate { ids.contains($0.id) }
-        ))) ?? []
-        return Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.text) })
-    }
+
 
     func setCanvasPan(_ pan: CGSize) {
         pendingCanvasPan = pan
@@ -470,6 +529,7 @@ final class WhiteboardPersistenceService: ObservableObject {
         flushPendingSaves()
         try? context.save()
         refreshActiveBoardData()
+        onLibraryChanged?()
     }
 
     private func fetchBoard(id: UUID) -> BoardEntity? {
@@ -522,7 +582,7 @@ final class WhiteboardPersistenceService: ObservableObject {
         guard let board = activeBoard() else { return }
         activeCanvasPan = CGSize(width: board.canvasPanX, height: board.canvasPanY)
         activeCanvasScale = CGFloat(board.canvasScale)
-        let resolved = resolvedTexts(for: board.notes)
+        let resolved = textResourceLookup
         activeNotesByID = Dictionary(
             uniqueKeysWithValues: board.notes.map { note in
                 (

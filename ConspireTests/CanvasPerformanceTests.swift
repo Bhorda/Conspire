@@ -241,3 +241,66 @@ struct LinkEndpointPersistenceTests {
         #expect(NodeID.Kind.pin.rawValue == 2)
     }
 }
+
+// MARK: - Every note is a library item
+
+@MainActor
+struct LibraryPerformanceTests {
+
+    /// Every note is a library item now, so a keystroke resolves text through
+    /// resources and tells the store one item changed. That runs on the edit
+    /// path, so it needs a number rather than an assumption.
+    @Test func costOfTypingInANoteWithAFullLibrary() throws {
+        let temp = try TemporaryStore()
+        let board = (try temp.service.context!.fetch(FetchDescriptor<BoardEntity>())).first!
+        for i in 0..<60 {
+            let note = NoteEntity(text: "Code \(i)", colour: i % 3, board: board)
+            temp.service.context!.insert(note)
+            board.notes.append(note)
+        }
+        try temp.service.context!.save()
+        temp.store.loadLibraryForActiveProject()
+
+        let target = board.notes.first!.id
+        var n = 0
+        measure("60 library notes: one keystroke", iterations: 60) {
+            n += 1
+            temp.service.updateNoteText(noteID: target, text: "Trust \(n)")
+        }
+    }
+
+    /// Reading the count is what the note card and every library row do, so it
+    /// has to be a dictionary lookup rather than a query.
+    @Test func costOfReadingAUseCount() throws {
+        let temp = try TemporaryStore()
+        let board = (try temp.service.context!.fetch(FetchDescriptor<BoardEntity>())).first!
+        for i in 0..<60 {
+            let note = NoteEntity(text: "Code \(i)", colour: 0, board: board)
+            temp.service.context!.insert(note)
+            board.notes.append(note)
+        }
+        try temp.service.context!.save()
+        temp.store.loadLibraryForActiveProject()
+        let ids = temp.store.textResources.map(\.id)
+
+        measure("use count x 60 notes (one frame)", iterations: 200) {
+            for id in ids { _ = temp.store.textUseCount(id) }
+        }
+    }
+
+    @Test func costOfRebuildingUseCounts() throws {
+        let temp = try TemporaryStore()
+        let board = (try temp.service.context!.fetch(FetchDescriptor<BoardEntity>())).first!
+        for i in 0..<60 {
+            let note = NoteEntity(text: "Code \(i)", colour: 0, board: board)
+            temp.service.context!.insert(note)
+            board.notes.append(note)
+        }
+        try temp.service.context!.save()
+        temp.store.loadLibraryForActiveProject()
+
+        measure("rebuildTextUseCounts (on change only)", iterations: 40) {
+            temp.store.rebuildTextUseCounts()
+        }
+    }
+}

@@ -23,8 +23,11 @@ extension WhiteboardStore {
             imageResources = []
             textResources = []
             imageThumbnails = [:]
+            textResourceUseCounts = [:]
             return
         }
+        // Notes written before the library existed join it here.
+        persistence?.adoptNotesIntoLibrary()
 
         let imagePredicate = #Predicate<ImageResourceEntity> { $0.projectID == projectID }
         let imageRows = (try? context.fetch(
@@ -37,8 +40,83 @@ extension WhiteboardStore {
             FetchDescriptor<TextResourceEntity>(predicate: textPredicate)
         )) ?? []
         textResources = textRows.map { $0.toResource() }.sorted { $0.createdAt > $1.createdAt }
+        syncTextLookup()
 
         decodeThumbnails(from: imageRows.map { (id: $0.id, data: $0.thumbnailData) })
+        rebuildTextUseCounts()
+    }
+
+    /// Patches one item's words in place. Called per keystroke, so it must not
+    /// fetch: the set of items has not changed, only what one of them says.
+    func noteTextResourceEdited(_ id: UUID, text: String) {
+        guard let index = textResources.firstIndex(where: { $0.id == id }) else { return }
+        guard textResources[index].text != text else { return }
+        textResources[index].text = text
+        persistence?.textResourceLookup[id] = text
+    }
+
+    /// Hands the persistence side the words it needs to resolve notes, so that
+    /// resolution is a dictionary read rather than a fetch per keystroke.
+    private func syncTextLookup() {
+        persistence?.textResourceLookup = Dictionary(
+            textResources.map { ($0.id, $0.text) }, uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    /// Reloads only the text items and their counts — what changes when a note
+    /// joins the library, or notes are duplicated or deleted.
+    func reloadTextResources() {
+        guard let context = persistence?.context, let projectID = activeProjectID else { return }
+        let predicate = #Predicate<TextResourceEntity> { $0.projectID == projectID }
+        let rows = (try? context.fetch(
+            FetchDescriptor<TextResourceEntity>(predicate: predicate)
+        )) ?? []
+        textResources = rows.map { $0.toResource() }.sorted { $0.createdAt > $1.createdAt }
+        syncTextLookup()
+        rebuildTextUseCounts()
+    }
+
+    /// How many notes each text item is on, cached.
+    ///
+    /// Every note is a library item now, so this is read once per note card and
+    /// once per library row. Counting it there would be a fetch per row per
+    /// render — the same mistake field membership made before it was cached.
+    func rebuildTextUseCounts() {
+        guard let context = persistence?.context, let projectID = activeProjectID else {
+            textResourceUseCounts = [:]
+            return
+        }
+        // Fetched by link rather than walked board by board. Going through
+        // `board.notes` faults every note in the project, which measured at
+        // ~5.8ms for sixty and scales with the whole project; this only reads
+        // the notes that actually carry a link.
+        // Optionals all the way through: a `#Predicate` body is one
+        // expression, so the comparison has to be against optional ids rather
+        // than unwrapping inside it.
+        let ids: [UUID?] = textResources.map { $0.id }
+        guard !ids.isEmpty else {
+            textResourceUseCounts = [:]
+            return
+        }
+        let linked = (try? context.fetch(FetchDescriptor<NoteEntity>(
+            predicate: #Predicate { ids.contains($0.textResourceID) }
+        ))) ?? []
+        var counts: [UUID: Int] = [:]
+        for note in linked {
+            if let id = note.textResourceID { counts[id, default: 0] += 1 }
+        }
+        textResourceUseCounts = counts
+    }
+
+    func textUseCount(_ resourceID: UUID) -> Int {
+        textResourceUseCounts[resourceID] ?? 0
+    }
+
+    /// True when editing this note's words would change another board too —
+    /// the only case where the library link is worth telling the user about.
+    func noteIsSharedWithAnotherPlace(_ resourceID: UUID?) -> Bool {
+        guard let resourceID else { return false }
+        return textUseCount(resourceID) > 1
     }
 
     /// Thumbnails decode off the main actor and arrive together. They are small
@@ -157,6 +235,8 @@ extension WhiteboardStore {
         try? context.save()
         let resource = entity.toResource()
         textResources.insert(resource, at: 0)
+        syncTextLookup()
+        rebuildTextUseCounts()
         return resource
     }
 
@@ -182,6 +262,7 @@ extension WhiteboardStore {
         if let index = textResources.firstIndex(where: { $0.id == id }) {
             textResources[index].text = text
         }
+        persistence?.textResourceLookup[id] = text
         // Notes on the open board read through to the resource, so the board
         // has to be rebuilt for the change to show.
         persistence?.refreshActiveBoard()
@@ -201,7 +282,9 @@ extension WhiteboardStore {
         if let entity = textResourceEntity(id: id) { context.delete(entity) }
         try? context.save()
         textResources.removeAll { $0.id == id }
+        syncTextLookup()
         persistence?.refreshActiveBoard()
+        rebuildTextUseCounts()
     }
 
     // MARK: - Uses
@@ -315,6 +398,7 @@ extension WhiteboardStore {
             colour: resource.colour ?? noteColourPicked,
             textResourceID: resourceID
         ) else { return }
+        rebuildTextUseCounts()
         appendActionLog("note placed from library \(noteID.uuidString.prefix(8))…")
     }
 

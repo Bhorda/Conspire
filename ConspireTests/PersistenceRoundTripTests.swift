@@ -46,6 +46,10 @@ final class TemporaryStore {
         store.persistence = service
         store.activeBoardID = service.activeBoardID
         store.activeProjectID = service.activeProjectID
+        // The same wiring the root view installs, so tests see what ships.
+        let store = self.store
+        service.onLibraryChanged = { store.reloadTextResources() }
+        service.onTextResourceEdited = { store.noteTextResourceEdited($0, text: $1) }
     }
 
     /// Imports a picture the way the app does: a resource in the project, then

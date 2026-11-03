@@ -203,14 +203,16 @@ struct LibraryPanelView: View {
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(filteredText) { resource in
-                    let uses = store.textUses(of: resource.id)
+                    // The cached count, not a fetch: this body runs for every
+                    // row on every render, and every note is an item now.
+                    let count = store.textUseCount(resource.id)
                     HStack(alignment: .top, spacing: 6) {
                         Text(resource.text)
                             .font(.system(size: 11))
                             .lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if !uses.isEmpty {
-                            Text("\(uses.count)")
+                        if count > 0 {
+                            Text("\(count)")
                                 .font(.system(size: 9, weight: .semibold))
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
@@ -225,6 +227,8 @@ struct LibraryPanelView: View {
                     }
                     .onTapGesture { showingUsesFor = resource.id }
                     .popover(isPresented: usesBinding(for: resource.id)) {
+                        // The full list is only worth computing once it is open.
+                        let uses = store.textUses(of: resource.id)
                         usesPopover(
                             uses: uses,
                             title: resource.text,

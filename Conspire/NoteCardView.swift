@@ -54,16 +54,24 @@ struct NoteCardView: View {
         return store.noteFieldChips[entry.noteID] ?? []
     }
 
-    /// Marks a note whose words come from the text library, because editing it
-    /// changes every board showing that item — worth knowing before you type.
+    /// Marks a note whose words are shared with somewhere else, because editing
+    /// it will change there too.
+    ///
+    /// Every note is a library item, so showing this whenever one exists would
+    /// put the same badge on every card and say nothing. It appears only when
+    /// the item is actually on more than one note.
     @ViewBuilder
     private var libraryChip: some View {
-        if isBoardStackEntry, entry.isTop,
-           store.activeNotesByID[entry.noteID]?.textResourceID != nil {
-            Image(systemName: "tray.full.fill")
-                .font(.system(size: 7, weight: .semibold))
-                .foregroundStyle(.black.opacity(0.4))
-                .help("From the project library — editing this changes it everywhere")
+        let resourceID = store.activeNotesByID[entry.noteID]?.textResourceID
+        if isBoardStackEntry, entry.isTop, store.noteIsSharedWithAnotherPlace(resourceID) {
+            let count = store.textUseCount(resourceID ?? UUID())
+            HStack(spacing: 2) {
+                Image(systemName: "tray.full.fill")
+                Text("\(count)").monospacedDigit()
+            }
+            .font(.system(size: 7, weight: .semibold))
+            .foregroundStyle(.black.opacity(0.45))
+            .help("Shared with \(count - 1) other note\(count == 2 ? "" : "s") — editing changes them too")
         }
     }
 

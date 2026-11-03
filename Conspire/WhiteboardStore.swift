@@ -211,6 +211,9 @@ final class WhiteboardStore: ObservableObject {
     @Published var activeProjectID: UUID?
     @Published var imageResources: [ImageResource] = []
     @Published var textResources: [TextResource] = []
+    /// Notes per text item, across the project. Cached: every note is a
+    /// library item now, so this is read far too often to recount.
+    @Published var textResourceUseCounts: [UUID: Int] = [:]
     /// Decoded 256px grid thumbnails, by resource id.
     @Published var imageThumbnails: [UUID: CGImage] = [:]
     /// Called after `locate` switches board, so the view can reload the rest of
