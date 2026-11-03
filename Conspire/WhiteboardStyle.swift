@@ -109,6 +109,26 @@ enum WhiteboardStyle {
     static let pinDetachColor = Color(red: 0.95, green: 0.3, blue: 0.3)
     static let pinBorderColor = Color.black.opacity(0.55)
 
+    // MARK: - Surfaces
+    //
+    // One place for the radii, so inner shapes can be concentric with the
+    // surfaces they sit on instead of guessing at a number.
+
+    /// Floating panels: boards, the library, the field controls.
+    static let panelCornerRadius: CGFloat = 20
+    /// Inline inspectors, which are smaller and attached to an object.
+    static let inspectorCornerRadius: CGFloat = 14
+    /// Floor for a concentric inset, for when a panel's own radius is small.
+    static let insetCornerRadiusMinimum: CGFloat = 6
+    static let panelPadding: CGFloat = 12
+    /// How close glass surfaces have to be before they blend into one shape.
+    static let glassContainerSpacing: CGFloat = 10
+    /// macOS dims chrome in a window that is not frontmost.
+    static let inactiveChromeOpacity: Double = 0.55
+    /// How a floating panel arrives and leaves. Glass reads badly when it
+    /// simply appears — it wants to grow out of where it came from.
+    static let panelAnimation: Animation = .smooth(duration: 0.24)
+
     static let toolbarChipHeight: CGFloat = 44
     static let toolbarSymbolSize: CGFloat = 17
     static let toolbarSpacing: CGFloat = 8

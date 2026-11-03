@@ -71,6 +71,10 @@ struct WhiteboardRootView: View {
         }
     }
 
+    private var showsFieldPanel: Bool {
+        store.placementMode == .field || store.selectedFieldID != nil
+    }
+
     /// The project switcher. It takes the place of the panel's old static
     /// "Whiteboards" title so the panel keeps its size: a 260pt panel with a
     /// 260pt-tall list has no room for nested disclosure groups.
@@ -310,23 +314,27 @@ struct WhiteboardRootView: View {
                         )
                 }
 
-                if store.placementMode == .field || store.selectedFieldID != nil {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            FieldControlPanel(store: store)
-                        }
+                VStack {
+                    HStack {
                         Spacer()
+                        if showsFieldPanel {
+                            FieldControlPanel(store: store)
+                                .transition(
+                                    .scale(scale: 0.94, anchor: .topTrailing)
+                                        .combined(with: .opacity)
+                                )
+                        }
                     }
-                    .padding(24)
+                    Spacer()
                 }
+                .padding(24)
+                .animation(WhiteboardStyle.panelAnimation, value: showsFieldPanel)
 
                 VStack (alignment: .leading){
                     Spacer()
                     
                     HStack {
-                        GlassEffectContainer {
-                            VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: WhiteboardStyle.glassContainerSpacing) {
                                 
                                 if !isSidebarCollapsed {
                                     VStack(alignment: .leading, spacing: 8) {
@@ -401,10 +409,16 @@ struct WhiteboardRootView: View {
                                     } message: {
                                         Text("This will remove the board and all its notes. This action cannot be undone.")
                                     }
-        //                            .glassEffect(.regular, in: .rect(cornerRadius: 20))
-                                    .glassEffectUnion(id: "sidebar", namespace: keyboardHints)
+                                    .glassPanel()
                                 }
-                                
+
+                                // The round buttons share a container, so they
+                                // blend into one shape where they meet. The
+                                // board panel is kept out of it: it is its own
+                                // surface, and a `Menu` inside a container is
+                                // documented to break the morph on 26.1.
+                                GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
+                                    VStack(spacing: 6) {
                                 Button {
                                     withAnimation { isLibraryCollapsed.toggle() }
                                 } label: {
@@ -419,14 +433,15 @@ struct WhiteboardRootView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Project library — drag text or images onto the board")
-                                .glassEffectUnion(id: "sidebar", namespace: keyboardHints)
+                                .contentShape(.circle)
+                                .chromeChip(in: .circle)
 
                                 Button {
                                     withAnimation {
                                         isSidebarCollapsed.toggle()
                                     }
                                 } label: {
-                                    Image(systemName: isSidebarCollapsed ? "rectangle.stack" : "rectangle.stack")
+                                    Image(systemName: isSidebarCollapsed ? "rectangle.stack" : "rectangle.stack.fill")
                                         .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
                                         .padding(12)
                                         .contentShape(Rectangle())
@@ -436,8 +451,9 @@ struct WhiteboardRootView: View {
                                         )
                                 }
                                 .buttonStyle(.plain)
-        //                        .glassEffect(.regular, in: .circle)
-                                .glassEffectUnion(id: "sidebar", namespace: keyboardHints)
+                                .help("Boards in this project")
+                                .contentShape(.circle)
+                                .chromeChip(in: .circle)
 
                                 Button {
                                     store.cycleStringVisibility()
@@ -453,12 +469,13 @@ struct WhiteboardRootView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Toggle strings: Hidden / Dimmed / Full")
-                                .glassEffect(.regular.interactive(), in: .circle)
+                                .contentShape(.circle)
+                                .chromeChip(in: .circle)
+                                    }
+                                }
                             }
-                            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
                             .padding(24)
                             .padding(.bottom, 54)
-                        }
 
                         if !isLibraryCollapsed {
                             LibraryPanelView(
@@ -467,6 +484,10 @@ struct WhiteboardRootView: View {
                                 tab: $libraryTab
                             )
                             .padding(.bottom, 78)
+                            .transition(
+                                .scale(scale: 0.94, anchor: .bottomLeading)
+                                    .combined(with: .opacity)
+                            )
                         }
 
                         Spacer()
@@ -479,40 +500,14 @@ struct WhiteboardRootView: View {
                     
                     
                     
-                    GlassEffectContainer {
+                    GlassEffectContainer(spacing: WhiteboardStyle.glassContainerSpacing) {
                         HStack(spacing: WhiteboardStyle.toolbarSpacing) {
                             ModifierFlagsMonitor(shift: $shiftHeld, command: $commandHeld, option: $optionHeld)
                                 .frame(width: 0, height: 0)
                                 .allowsHitTesting(false)
-                            
-//                            ModifierKeyTooltip(shift: $shiftHeld, command: $commandHeld, option: $optionHeld)
-//                                .glassEffectID("modifiers", in: keyboardHints)
-//                                .padding(.horizontal, 16)
-//                                .padding(.vertical, 12)
-//                                .glassEffect()
 
                             Spacer()
-                        
-                            
-                            // TODO: Make icons stay in place when text changes. Might need to separate Text from Image to do so.
-//                            HStack {
-//                                Label(hintPrimaryLabel, systemImage: "cursorarrow.click")
-//                                    .frame(width: 120, alignment: .leading)
-////                                    .glassEffect()
-//                                    .glassEffectUnion(id: "hints", namespace: keyboardHints)
-//                                Label(hintSecondaryLabel, systemImage: "cursorarrow.click.2")
-//                                    .frame(width: 120, alignment: .leading)
-////                                    .glassEffect()
-//                                    .glassEffectUnion(id: "hints", namespace: keyboardHints)
-//                                Label(hintCycleLabel, systemImage: "arrow.right.to.line")
-//                                    .frame(width: 100, alignment: .leading)
-////                                    .glassEffect()
-//                                    .glassEffectUnion(id: "hints", namespace: keyboardHints)
-//                            }
-//                            .padding(.horizontal, 16)
-//                            .padding(.vertical, 12)
-//                            .glassEffect()
-                            
+
                             // The hand leads the row because it is where you
                             // come back to: the note and field tools return
                             // here once they have made something, and so does
@@ -526,9 +521,7 @@ struct WhiteboardRootView: View {
                                 colours: WhiteboardStyle.noteBackgrounds,
                                 picked: store.noteColourPicked,
                                 isActive: store.placementMode == .note,
-                                help: "Note — click the canvas to place one (1 · 2 · 3)",
-                                unionID: "notecolors",
-                                namespace: keyboardHints
+                                help: "Note — click the canvas to place one (1 · 2 · 3)"
                             ) { store.pickNoteColour($0) }
 
                             ToolSwatchRow(
@@ -536,9 +529,7 @@ struct WhiteboardRootView: View {
                                 colours: WhiteboardStyle.stringColors,
                                 picked: store.stringColourPicked,
                                 isActive: store.placementMode == .string,
-                                help: "String — click two notes to link them (⌘1 · ⌘2 · ⌘3)",
-                                unionID: "stringcolors",
-                                namespace: keyboardHints
+                                help: "String — click two notes to link them (⌘1 · ⌘2 · ⌘3)"
                             ) { store.pickStringColour($0) }
 
                             // Picking a field colour takes up the pencil; picking a note
@@ -548,9 +539,7 @@ struct WhiteboardRootView: View {
                                 colours: WhiteboardStyle.fieldFills,
                                 picked: store.fieldColourPicked,
                                 isActive: store.placementMode == .field,
-                                help: "Field — drag to draw a zone (⌥1 · ⌥2 · ⌥3)",
-                                unionID: "fieldcolors",
-                                namespace: keyboardHints
+                                help: "Field — drag to draw a zone (⌥1 · ⌥2 · ⌥3)"
                             ) { store.pickFieldColour($0) }
 
                             Spacer()
@@ -572,7 +561,8 @@ struct WhiteboardRootView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Add an image — or drop a file on the canvas, or paste one (⌘V)")
-                            .glassEffect()
+                            .contentShape(.capsule)
+                            .chromeChip(in: .capsule)
 
                             Button {
                                 store.animateZoomReset(viewportSize: proxy.size)
@@ -585,8 +575,10 @@ struct WhiteboardRootView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Reset zoom to 100% (viewport center)")
+                            .contentShape(.capsule)
+                            // The effect first, then the ID that names it.
+                            .chromeChip(in: .capsule)
                             .glassEffectID("zoom", in: keyboardHints)
-                            .glassEffect()
                             
                             HomeCompassHUD(store: store, viewportSize: proxy.size)
                         }
@@ -861,7 +853,8 @@ private struct HomeCompassHUD: View {
         .disabled(!hasContent)
         .buttonStyle(.plain)
         .help(onScreen ? "Center on content" : "Compass: tap to recenter")
-        .glassEffect(.regular.interactive(), in: .circle)
+        .contentShape(.circle)
+        .chromeChip(in: .circle)
     }
 }
 

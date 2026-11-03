@@ -38,9 +38,9 @@ struct LibraryPanelView: View {
             searchField
             content
         }
-        .padding(12)
+        .padding(WhiteboardStyle.panelPadding)
         .frame(width: 300)
-        .modifier(PanelBackground(cornerRadius: 20))
+        .glassPanel()
         .alert("New text item", isPresented: $isAddingText) {
             TextField("Text", text: $newTextDraft)
             Button("Add") {
@@ -130,7 +130,7 @@ struct LibraryPanelView: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+        .insetControl()
     }
 
     @ViewBuilder
@@ -220,7 +220,7 @@ struct LibraryPanelView: View {
                     }
                     .padding(.horizontal, 7)
                     .padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+                    .insetControl(fill: 0.05)
                     .contentShape(Rectangle())
                     .draggable(LibraryDragPayload(kind: .text, resourceID: resource.id)) {
                         Text(resource.text).lineLimit(1).padding(6)

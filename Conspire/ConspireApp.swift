@@ -9,6 +9,11 @@ import SwiftUI
 @main
 struct ConspireApp: App {
     @AppStorage("showDebugHUD") private var showDebugHUD: Bool = false
+    /// Glass panels re-blur every frame while the canvas moves under them.
+    /// Fields and images are Core Animation layers now so the budget is far
+    /// larger than when this last mattered, but the blur is not free — this is
+    /// the switch if panning ever feels heavy again.
+    @AppStorage("useGlassPanels") private var useGlassPanels: Bool = true
 
     /// The store lives at an explicit, app-specific path.
     ///
@@ -49,6 +54,8 @@ struct ConspireApp: App {
             CommandMenu("Developer") {
                 Toggle("Show Debug HUD", isOn: $showDebugHUD)
                     .keyboardShortcut("d", modifiers: [.command, .shift])
+                Toggle("Glass Panels", isOn: $useGlassPanels)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
             }
         }
     }

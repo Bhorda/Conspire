@@ -41,7 +41,10 @@ private struct ToolChipContainer: ViewModifier {
         content
             .padding(.horizontal, 14)
             .frame(height: WhiteboardStyle.toolbarChipHeight)
-            .glassEffect()
+            // A glass button otherwise only answers on its symbol, so the
+            // whole pill has to be claimed as the hit area.
+            .contentShape(.capsule)
+            .chromeChip(in: .capsule)
     }
 }
 
@@ -60,7 +63,8 @@ struct HandToolChip: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .glassEffect()
+        .contentShape(.capsule)
+        .chromeChip(in: .capsule)
         .help("Hand — move and adjust anything, create nothing (Esc)")
     }
 }
@@ -72,8 +76,6 @@ struct ToolSwatchRow: View {
     let picked: Int
     let isActive: Bool
     let help: String
-    let unionID: String
-    let namespace: Namespace.ID
     let pick: (Int) -> Void
 
     var body: some View {
@@ -87,7 +89,6 @@ struct ToolSwatchRow: View {
                         .foregroundStyle(colours[index])
                 }
                 .buttonStyle(.plain)
-                .glassEffectUnion(id: unionID, namespace: namespace)
             }
         }
         .modifier(ToolChipContainer())

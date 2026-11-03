@@ -452,7 +452,7 @@ struct FieldInlineInspector: View {
             .buttonStyle(.plain)
         }
         .padding(8)
-        .modifier(PanelBackground(cornerRadius: 12))
+        .glassPanel(cornerRadius: WhiteboardStyle.inspectorCornerRadius)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear { labelDraft = field.label }
         .onChange(of: field.id) { _, _ in labelDraft = field.label }
