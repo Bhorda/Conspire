@@ -237,27 +237,24 @@ struct CarryMechanicsTests {
         #expect(store.pins.isEmpty, "a pin was made while the hand was full")
     }
 
-    /// What you see is where it lands. The pile floats clear of the pointer so
-    /// you can aim it; placing used to ignore that and drop it on the pointer
-    /// instead, sliding it half a card off the spot you had just lined up.
-    @Test func thePileLandsWhereThePreviewShowedIt() throws {
-        let temp = try TemporaryStore()
-        let store = temp.store
-        _ = try #require(stageACarry(temp))
-        store.canvasScale = 2
-        store.cursorInRoot = CGPoint(x: 640, y: 480)
+    /// The pile lands on the pointer, at any zoom. The offset is there so the
+    /// cards do not cover the point being aimed at — the point is still the
+    /// pointer, and the pile slides onto it as it lands.
+    @Test func thePileLandsOnThePointer() throws {
+        for scale in [CGFloat(0.4), 1, 2.5] {
+            let temp = try TemporaryStore()
+            let store = temp.store
+            _ = try #require(stageACarry(temp))
+            store.canvasScale = scale
+            store.cursorInRoot = CGPoint(x: 640, y: 480)
 
-        store.placeCarriedAtCursor(modifiers: .none)
+            store.placeCarriedAtCursor(modifiers: .none)
 
-        let expected = WhiteboardStore.carryAnchorWorld(
-            cursorInRoot: store.cursorInRoot, pan: store.canvasPan, scale: store.canvasScale
-        )
-        let anchor = try #require(store.carriedGroup?.anchor)
-        #expect(abs(anchor.x - expected.x) < 0.0001)
-        #expect(abs(anchor.y - expected.y) < 0.0001)
-        // And not on the pointer, which is where it used to go.
-        let pointerWorld = store.rootToWorld(store.cursorInRoot)
-        #expect(abs(anchor.x - pointerWorld.x) > 1)
+            let pointerWorld = store.rootToWorld(store.cursorInRoot)
+            let anchor = try #require(store.carriedGroup?.anchor)
+            #expect(abs(anchor.x - pointerWorld.x) < 0.0001, "at \(scale)x")
+            #expect(abs(anchor.y - pointerWorld.y) < 0.0001, "at \(scale)x")
+        }
     }
 
     @Test func thereIsOneAnswerToAClickWhileCarrying() throws {

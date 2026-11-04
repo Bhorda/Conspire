@@ -1302,17 +1302,16 @@ final class WhiteboardStore: ObservableObject {
         appendActionLog("pickUp group \(groupID.uuidString.prefix(8))… → carry \(result.carried.noteIDs.count) notes")
     }
 
-    /// Puts the carried pile down where it is, and says whether there was
+    /// Puts the carried pile down at the pointer, and says whether there was
     /// anything to put down.
     ///
     /// The single answer to a click while carrying, whatever the click landed
     /// on. Every interaction on the canvas has to get this right, so there is
     /// one of it.
     ///
-    /// Down **where the pile is**, not at the pointer. The pile floats clear of
-    /// the pointer so you can see what you are aiming — and placing at the
-    /// pointer then slid it half a card up and left, away from the spot you had
-    /// just lined it up on. The preview is the aim.
+    /// At the **pointer**, not where the pile is floating. The offset exists so
+    /// the cards do not cover the point you are aiming at, so the point you are
+    /// aiming at is the pointer — the pile slides onto it as it lands.
     @discardableResult
     func placeCarriedAtCursor() -> Bool {
         // Two overloads rather than a default argument: a default is evaluated
@@ -1324,7 +1323,7 @@ final class WhiteboardStore: ObservableObject {
     func placeCarriedAtCursor(modifiers: InputModifiers) -> Bool {
         guard isCarrying else { return false }
         stopEditing()
-        placeCarriedAt(world: bottomCenterFollowWorld(), modifiers: modifiers)
+        placeCarriedAt(world: rootToWorld(cursorInRoot), modifiers: modifiers)
         return true
     }
 

@@ -71,6 +71,12 @@ struct HandToolChip: View {
             Image(systemName: symbols.name(filled: isActive))
                 .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
                 .foregroundStyle(Color.primary)
+                // A fixed box: the two hands are different symbols, so without
+                // it the chip changed width whenever you picked notes up.
+                .frame(
+                    width: WhiteboardStyle.toolbarSymbolBox.width,
+                    height: WhiteboardStyle.toolbarSymbolBox.height
+                )
                 .padding(.horizontal, 14)
                 .frame(height: WhiteboardStyle.toolbarChipHeight)
                 .contentShape(Rectangle())

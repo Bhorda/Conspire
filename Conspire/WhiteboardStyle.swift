@@ -145,6 +145,13 @@ enum WhiteboardStyle {
 
     static let toolbarChipHeight: CGFloat = 44
     static let toolbarSymbolSize: CGFloat = 17
+    /// Box every toolbar symbol is drawn in.
+    ///
+    /// SF Symbols are not all the same width, and the hand chip swaps between
+    /// two different ones — an empty hand and a hand holding something — so
+    /// without a fixed box the chip resized every time you picked notes up.
+    /// Wide enough for the widest of them.
+    static let toolbarSymbolBox = CGSize(width: 22, height: 20)
     static let toolbarSpacing: CGFloat = 8
     static let textPadding: CGFloat = 8
     static let displayMaxLines = 6
