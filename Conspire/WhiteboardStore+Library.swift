@@ -384,7 +384,7 @@ extension WhiteboardStore {
         images.append(asset)
         ensureDecoded(resourceID)
         insertImagePlacement(asset)
-        selectedImageID = asset.id
+        selectImage(asset.id)
         registerImageUndo(before, actionName: "Add Image")
         appendActionLog("image placed from library")
     }
@@ -443,8 +443,8 @@ extension WhiteboardStore {
         let target = Self.panCentring(
             worldPoint: worldPoint, viewportSize: viewportSize, scale: canvasScale
         )
-        withAnimation(.easeInOut(duration: 0.35)) {
-            canvasPan = target
-        }
+        // Stepped rather than handed to `withAnimation`, so the pictures and
+        // the notes arrive together — see `animateCamera`.
+        animateCamera(toPan: target, duration: 0.35)
     }
 }

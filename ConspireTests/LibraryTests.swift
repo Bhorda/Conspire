@@ -295,8 +295,11 @@ struct ResourceUsesTests {
 
         #expect(!reloaded)
         #expect(temp.service.activeBoardID == boardID)
-        // And it still moved the canvas to the thing.
-        #expect(abs(900 * temp.store.canvasScale + temp.store.canvasPan.width - 500) < 0.0001)
+        // And it still aims the canvas at the thing. The move is stepped rather
+        // than handed to `withAnimation` — see `animateCamera` — so what is set
+        // synchronously is the destination, not the pan.
+        let target = temp.store.cameraTarget
+        #expect(abs(900 * temp.store.canvasScale + (target?.pan.width ?? 0) - 500) < 0.0001)
     }
 }
 

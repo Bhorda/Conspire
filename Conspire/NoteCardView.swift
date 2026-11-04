@@ -209,17 +209,14 @@ struct NoteCardView: View {
                     }
                 }
         )
-        .onTapGesture(count: 2) {
-            // Double-click to edit the words. This replaces the pencil button
-            // that used to sit on the card, and is the gesture people try
-            // first anyway.
-            guard store.carriedGroup == nil, isBoardStackEntry else { return }
-            store.selectNote(nil)
-            store.startEditing(note: entry.noteID)
-        }
+        // One tap gesture, not two. A `count: 2` gesture beside a plain one
+        // holds the single tap back for the whole double-click interval before
+        // it can be sure no second click is coming — which is what made a
+        // note's inspector arrive late. The store counts the clicks instead, so
+        // the first one acts immediately and the second upgrades it to editing.
         .onTapGesture {
             // Holding notes trumps every creation interaction: the click always means "place".
-            if store.carriedGroup != nil {
+            if store.isCarrying {
                 if isBoardStackEntry {
                     store.handlePrimaryTapOnBoardGroup(groupID: entry.groupID)
                 } else {
@@ -237,14 +234,21 @@ struct NoteCardView: View {
                 }
                 return
             }
+            // A click inside the words is the text field's, not the card's.
+            guard !isEditing else { return }
             // Adding to a stack is creation, so it belongs to the note tool.
             // In the hand, a click selects — which is what gives the note an
-            // inspector like every other object on the canvas.
+            // inspector like every other object on the canvas — and a second
+            // click within the double-click interval opens it for editing.
             if isBoardStackEntry, store.placementMode == .note {
                 store.createNoteOnTopOfBoardStack(groupID: entry.groupID)
             } else if isBoardStackEntry {
-                store.stopEditing()
-                store.selectNote(entry.noteID)
+                switch store.noteClickIntent(for: entry.noteID) {
+                case .select:
+                    store.selectNote(entry.noteID)
+                case .edit:
+                    store.startEditing(note: entry.noteID)
+                }
             } else {
                 store.stopEditing()
             }

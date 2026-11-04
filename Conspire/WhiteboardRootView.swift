@@ -297,7 +297,11 @@ struct WhiteboardRootView: View {
 
                 // Reshape / move surface. Its hit area is only the fields themselves,
                 // so clicks on empty canvas still reach the background below.
-                if store.placementMode != .field {
+                // Not while carrying. This layer's hit shape is the fields
+                // themselves, and its drag gesture claimed the click even
+                // though `beginFieldGesture` then declined it — so a pile of
+                // notes could not be put down inside a field at all.
+                if store.placementMode != .field, !store.isCarrying {
                     FieldInteractionLayer(store: store)
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
@@ -322,6 +326,9 @@ struct WhiteboardRootView: View {
                 // handle keep a constant size at any zoom.
                 ImageInteractionLayer(store: store)
                     .frame(width: proxy.size.width, height: proxy.size.height)
+                    // Likewise: a click on a picture while carrying means
+                    // "put them down here", not "select the picture".
+                    .allowsHitTesting(!store.isCarrying)
 
                 ZStack(alignment: .topLeading) {
                     let w = WhiteboardStyle.noteSize.width
@@ -346,7 +353,7 @@ struct WhiteboardRootView: View {
                 // themselves, so everything else falls through.
                 PinOverlayView(store: store)
                     .frame(width: proxy.size.width, height: proxy.size.height)
-                if store.placementMode == .hand {
+                if store.placementMode == .hand, !store.isCarrying {
                     PinInteractionLayer(store: store)
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
@@ -500,7 +507,10 @@ struct WhiteboardRootView: View {
                             // come back to: the note and field tools return
                             // here once they have made something, and so does
                             // Escape.
-                            HandToolChip(isActive: store.placementMode == .hand) {
+                            HandToolChip(
+                                isActive: store.placementMode == .hand,
+                                isCarrying: store.isCarrying
+                            ) {
                                 store.enterHandMode()
                             }
 

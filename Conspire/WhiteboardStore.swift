@@ -112,6 +112,12 @@ enum PlacementMode: Sendable {
     }
 }
 
+/// What a click on a note turns out to mean.
+enum NoteClickIntent: Equatable {
+    case select
+    case edit
+}
+
 /// One row in the flat canvas + carry render list.
 struct NoteDrawEntry: Identifiable {
     let noteID: UUID
@@ -153,6 +159,9 @@ final class WhiteboardStore: ObservableObject {
     /// the card itself.
     @Published var selectedNoteID: UUID?
     @Published private(set) var carriedGroup: NoteGroup?
+    /// Holding notes trumps every other interaction: while this is true the
+    /// next click means "place", wherever on the canvas it lands.
+    var isCarrying: Bool { carriedGroup != nil }
     /// Option-stamp clones animating toward placement; originals stay in `carriedGroup`.
     @Published private(set) var stampPlacementOverlay: NoteGroup?
     @Published var canvasPan: CGSize = .zero
@@ -268,6 +277,11 @@ final class WhiteboardStore: ObservableObject {
     private let actionLogMaxEntries = 30
     /// When false, `carriedGroup.anchor` is driven by animations only (pickup / place), not live cursor.
     private var carryAnchorFollowsCursor = true
+    /// Last click on a note, so the next one can be read as a double.
+    private var lastNoteClick: (noteID: UUID, time: Date)?
+    private var cameraAnimationTask: Task<Void, Never>?
+    /// Where the camera is heading while it is moving; nil at rest.
+    private(set) var cameraTarget: (pan: CGSize, scale: CGFloat)?
     private var firstPickupLerpTask: Task<Void, Never>?
     private var activeDragSession: DragSession?
     /// Forces the next `updateCursor` through even if the point has not moved.
@@ -357,7 +371,7 @@ final class WhiteboardStore: ObservableObject {
         if hovered != hoveredLinkID { hoveredLinkID = hovered }
         updateFieldHover(atWorld: world)
         if var carry = carriedGroup, carryAnchorFollowsCursor {
-            carry.anchor = (activeDragSession != nil) ? rootToWorld(pointInRoot) : rootToWorld(bottomCenterFollowRoot())
+            carry.anchor = (activeDragSession != nil) ? rootToWorld(pointInRoot) : bottomCenterFollowWorld()
             carriedGroup = carry
         } else {
             hoveredGroupID = BoardLayout.hitGroup(world: world, groups: boardNoteGroups())
@@ -387,6 +401,12 @@ final class WhiteboardStore: ObservableObject {
             stopEditing()
             return true
         }
+        // A handful of notes is the most in-progress thing there is, and Escape
+        // used to step straight over it to the selection underneath. It puts
+        // them down where the hand is; Undo takes them back if that was wrong.
+        if placeCarriedAtCursor(modifiers: .none) {
+            return true
+        }
         if fieldGesture != nil || !fieldDraftStroke.isEmpty {
             cancelFieldGesture()
             return true
@@ -403,12 +423,8 @@ final class WhiteboardStore: ObservableObject {
             cancelLinkDraft()
             return true
         }
-        if selectedFieldID != nil || selectedLinkID != nil || selectedImageID != nil
-            || selectedNoteID != nil {
-            selectField(nil)
-            selectLink(nil)
-            selectImage(nil)
-            selectedNoteID = nil
+        if hasSelection {
+            clearSelection()
             return true
         }
         if placementMode != .hand {
@@ -519,19 +535,49 @@ final class WhiteboardStore: ObservableObject {
         return best
     }
 
+    /// Every selection on the canvas, set in one place.
+    ///
+    /// Four kinds of object each kept their own selected-id, and each `select…`
+    /// cleared a different subset of the rest: a string's cleared only the
+    /// note, a field's cleared the note and the image but not the string, and
+    /// starting to edit a note cleared nothing at all — which is why an image
+    /// stayed outlined while you typed. Selection is exclusive, and editing a
+    /// note is a selection too, so every change now goes through here.
+    ///
+    /// Omitted arguments are cleared, deliberately: that is what makes this
+    /// exclusive by construction rather than by remembering to clear.
+    func setSelection(
+        note: UUID? = nil,
+        link: LinkID? = nil,
+        field: UUID? = nil,
+        image: UUID? = nil,
+        editing: UUID? = nil
+    ) {
+        // Each guarded, so selecting what is already selected publishes nothing.
+        if editingNoteID != editing { editingNoteID = editing }
+        if selectedNoteID != note { selectedNoteID = note }
+        if selectedLinkID != link { selectedLinkID = link }
+        if selectedFieldID != field { selectedFieldID = field }
+        if selectedImageID != image { selectedImageID = image }
+    }
+
+    /// Nothing selected, and nothing being edited.
+    func clearSelection() {
+        setSelection()
+    }
+
+    var hasSelection: Bool {
+        selectedNoteID != nil || selectedLinkID != nil
+            || selectedFieldID != nil || selectedImageID != nil
+    }
+
     func selectLink(_ id: LinkID?) {
-        selectedLinkID = id
-        if id != nil { selectedNoteID = nil }
+        setSelection(link: id)
     }
 
     /// One selection at a time, so Delete and Escape always have one target.
     func selectNote(_ id: UUID?) {
-        selectedNoteID = id
-        if id != nil {
-            selectedFieldID = nil
-            selectedImageID = nil
-            selectedLinkID = nil
-        }
+        setSelection(note: id)
     }
 
     func setSelectedNoteColour(_ index: Int) {
@@ -666,8 +712,29 @@ final class WhiteboardStore: ObservableObject {
 
     // MARK: - Editing
 
+    /// Editing is a selection: the words have the keyboard, so nothing else
+    /// may still be showing an inspector or an outline.
     func startEditing(note id: UUID) {
-        editingNoteID = id
+        setSelection(editing: id)
+    }
+
+    /// A click on a note, resolved into what it means.
+    ///
+    /// `onTapGesture(count: 2)` beside a plain `onTapGesture` cannot fire the
+    /// single tap until the double-click interval has passed with no second
+    /// click — which is why a note's inspector used to arrive a third of a
+    /// second after the click that asked for it. AppKit has no such delay:
+    /// `mouseDown` carries a click count. This reproduces that, so the first
+    /// click acts at once and a second one upgrades it to editing.
+    func noteClickIntent(for noteID: UUID, at time: Date = Date()) -> NoteClickIntent {
+        if let last = lastNoteClick,
+           last.noteID == noteID,
+           time.timeIntervalSince(last.time) <= NSEvent.doubleClickInterval {
+            lastNoteClick = nil
+            return .edit
+        }
+        lastNoteClick = (noteID: noteID, time: time)
+        return .select
     }
 
     func stopEditing() {
@@ -675,6 +742,7 @@ final class WhiteboardStore: ObservableObject {
     }
 
     func clearTransientStateForBoardSwitch() {
+        cancelCameraAnimation()
         cancelDrag()
         cancelFirstPickupLerp()
         discardStampPlacementOverlayCleaningOrphans()
@@ -704,32 +772,29 @@ final class WhiteboardStore: ObservableObject {
     }
 
     func handleBackgroundPrimaryTap(atRootPoint rootPoint: CGPoint, modifiers: InputModifiers) {
-        let world = rootToWorld(rootPoint)
-
         // Holding notes trumps every creation interaction: the click always means "place".
         if carriedGroup != nil {
-            stopEditing()
-            placeCarriedAt(world: world, modifiers: modifiers)
+            cursorInRoot = rootPoint
+            placeCarriedAtCursor(modifiers: modifiers)
             return
         }
+
+        let world = rootToWorld(rootPoint)
 
         if let hitLink = pickLink(atWorld: world) {
             selectLink(hitLink)
             return
         }
+        // Read before the clear below, which ends editing along with the rest.
+        let wasEditing = editingNoteID != nil
         // Clicking empty canvas puts everything down.
-        selectLink(nil)
-        selectField(nil)
-        selectImage(nil)
-        selectedNoteID = nil
+        clearSelection()
 
         if placementMode == .string {
             cancelLinkDraft()
             return
         }
-        let wasEditing = editingNoteID != nil
-        stopEditing()
-
+        // Committing the words is the whole of that click.
         if wasEditing { return }
         // Only the note tool creates from the canvas; the hand and the pencil
         // have already done their work above (deselecting, ending editing).
@@ -750,7 +815,7 @@ final class WhiteboardStore: ObservableObject {
         guard activeGroups.contains(where: { $0.id == groupID }) else { return }
         stopEditing()
         if let noteID = persistence?.appendNoteOnTopOfGroup(groupID: groupID, colour: noteColourPicked) {
-            editingNoteID = noteID
+            startEditing(note: noteID)
             appendActionLog("new note on stack \(groupID.uuidString.prefix(8))…")
             finishOneShotTool()
         }
@@ -759,7 +824,7 @@ final class WhiteboardStore: ObservableObject {
     func handlePrimaryTapOnBoardGroup(groupID: UUID, modifiers: InputModifiers) {
         guard let baseCarry = carriedGroup else { return }
         if modifiers.command {
-            placeCarriedAt(world: rootToWorld(cursorInRoot), modifiers: modifiers)
+            placeCarriedAtCursor(modifiers: modifiers)
             return
         }
         let undoBefore = snapshot()
@@ -786,6 +851,7 @@ final class WhiteboardStore: ObservableObject {
     // MARK: - Pan / Zoom
 
     func applyPan(_ translation: CGSize) {
+        cancelCameraAnimation()
         canvasPan = CGSize(
             width: canvasPan.width + translation.width,
             height: canvasPan.height + translation.height
@@ -810,7 +876,88 @@ final class WhiteboardStore: ObservableObject {
         }
     }
 
+    /// Moves the camera over time by stepping `canvasPan` and `canvasScale`
+    /// itself, instead of handing them to `withAnimation`.
+    ///
+    /// The canvas is drawn by two systems. Notes, strings and chrome are
+    /// SwiftUI; fields and images are Core Animation layers behind an
+    /// `NSViewRepresentable`. A SwiftUI animation interpolates its own layers
+    /// every frame but calls `updateNSView` once, with the destination — so the
+    /// pictures were already in place while the notes were still gliding
+    /// towards them, and a locate looked like two separate moves. Stepping the
+    /// value means every layer, either kind, reads the same camera on the same
+    /// tick.
+    private func animateCamera(
+        toPan targetPan: CGSize, scale targetScale: CGFloat?, duration: TimeInterval
+    ) {
+        cancelCameraAnimation()
+        let fromPan = canvasPan
+        let fromScale = canvasScale
+        let toScale = targetScale ?? canvasScale
+        cameraTarget = (pan: targetPan, scale: toScale)
+        let frames = max(Int((duration / 0.016_666_7).rounded()), 1)
+
+        cameraAnimationTask = Task { @MainActor [weak self] in
+            for frame in 1...frames {
+                try? await Task.sleep(nanoseconds: 16_666_667)
+                guard !Task.isCancelled, let self else { return }
+                let step = Self.cameraStep(
+                    from: (pan: fromPan, scale: fromScale),
+                    to: (pan: targetPan, scale: toScale),
+                    progress: CGFloat(frame) / CGFloat(frames)
+                )
+                self.canvasPan = step.pan
+                if targetScale != nil { self.canvasScale = step.scale }
+                // The same treatment a pan or a pinch gets: the panels stand
+                // their blur down, because the backdrop is moving either way.
+                self.noteCanvasMovement()
+            }
+            self?.cameraAnimationTask = nil
+            self?.cameraTarget = nil
+        }
+    }
+
+    /// Pans without touching the zoom.
+    func animateCamera(toPan targetPan: CGSize, duration: TimeInterval) {
+        animateCamera(toPan: targetPan, scale: nil, duration: duration)
+    }
+
+    /// A gesture always wins over a glide that is still running.
+    func cancelCameraAnimation() {
+        cameraAnimationTask?.cancel()
+        cameraAnimationTask = nil
+        cameraTarget = nil
+    }
+
+    /// One frame of a camera move, as a pure function.
+    ///
+    /// The loop above is plumbing — a sleep and a counter. This is the part
+    /// worth being sure of, and being able to check it without waiting on a
+    /// clock keeps the test off the wall clock, where a busy machine decides
+    /// whether it passes.
+    static func cameraStep(
+        from: (pan: CGSize, scale: CGFloat),
+        to: (pan: CGSize, scale: CGFloat),
+        progress: CGFloat
+    ) -> (pan: CGSize, scale: CGFloat) {
+        let u = easeInOut(progress)
+        return (
+            pan: CGSize(
+                width: from.pan.width + (to.pan.width - from.pan.width) * u,
+                height: from.pan.height + (to.pan.height - from.pan.height) * u
+            ),
+            scale: from.scale + (to.scale - from.scale) * u
+        )
+    }
+
+    /// Smoothstep — the shape `.easeInOut` was drawing before.
+    static func easeInOut(_ t: CGFloat) -> CGFloat {
+        let x = min(max(t, 0), 1)
+        return x * x * (3 - 2 * x)
+    }
+
     func applyZoom(magnification: CGFloat, atRootPoint rootPoint: CGPoint) {
+        cancelCameraAnimation()
         noteCanvasMovement()
         let oldScale = max(canvasScale, 0.0001)
         let scaleBase = max(isSnappedTo1x ? (snapBypassScaleAccumulator ?? oldScale) : oldScale, 0.0001)
@@ -870,10 +1017,7 @@ final class WhiteboardStore: ObservableObject {
             height: centerRoot.y - worldY * targetScale
         )
 
-        withAnimation(.easeInOut(duration: 0.25)) {
-            canvasScale = targetScale
-            canvasPan = targetPan
-        }
+        animateCamera(toPan: targetPan, scale: targetScale, duration: 0.25)
         isSnappedTo1x = true
         snapBypassScaleAccumulator = nil
         lastHapticTickScale = targetScale
@@ -937,10 +1081,7 @@ final class WhiteboardStore: ObservableObject {
             height: centerRoot.y - center.y * targetScale
         )
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            canvasScale = targetScale
-            canvasPan = targetPan
-        }
+        animateCamera(toPan: targetPan, scale: targetScale, duration: 0.3)
         isSnappedTo1x = false
         snapBypassScaleAccumulator = nil
         lastHapticTickScale = targetScale
@@ -998,6 +1139,9 @@ final class WhiteboardStore: ObservableObject {
         discardStampPlacementOverlayCleaningOrphans()
         let undoBefore = snapshot()
         guard let pickedRender = activeGroups.first(where: { $0.id == groupID }) else { return }
+        // These notes are what the hand is on now, so nothing else keeps an
+        // inspector open behind them — the same rule a click anywhere follows.
+        clearSelection()
         let picked = NoteGroup(
             id: pickedRender.id,
             anchor: pickedRender.anchor,
@@ -1053,7 +1197,7 @@ final class WhiteboardStore: ObservableObject {
                         guard !Task.isCancelled, carriedGroup != nil else { return }
                         let t = Double(i) / Double(n)
                         let u = 1 - pow(1 - t, 3)
-                        let target = rootToWorld(bottomCenterFollowRoot())
+                        let target = bottomCenterFollowWorld()
                         if var g = carriedGroup {
                             g.anchor = CGPoint(
                                 x: fromWorld.x + (target.x - fromWorld.x) * u,
@@ -1065,7 +1209,7 @@ final class WhiteboardStore: ObservableObject {
                     guard !Task.isCancelled else { return }
                     carryAnchorFollowsCursor = true
                     if var g = carriedGroup {
-                        g.anchor = rootToWorld(bottomCenterFollowRoot())
+                        g.anchor = bottomCenterFollowWorld()
                         carriedGroup = g
                     }
                 }
@@ -1131,7 +1275,7 @@ final class WhiteboardStore: ObservableObject {
                     guard !Task.isCancelled, carriedGroup != nil else { return }
                     let t = Double(i) / Double(n)
                     let u = 1 - pow(1 - t, 3)
-                    let target = rootToWorld(bottomCenterFollowRoot())
+                    let target = bottomCenterFollowWorld()
                     if var g = carriedGroup {
                         g.anchor = CGPoint(
                             x: fromWorld.x + (target.x - fromWorld.x) * u,
@@ -1143,7 +1287,7 @@ final class WhiteboardStore: ObservableObject {
                 guard !Task.isCancelled else { return }
                 carryAnchorFollowsCursor = true
                 if var g = carriedGroup {
-                    g.anchor = rootToWorld(bottomCenterFollowRoot())
+                    g.anchor = bottomCenterFollowWorld()
                     carriedGroup = g
                 }
             }
@@ -1156,6 +1300,32 @@ final class WhiteboardStore: ObservableObject {
         }
         registerUndoRedoRestore(undoBefore, actionName: "Pick Up Notes")
         appendActionLog("pickUp group \(groupID.uuidString.prefix(8))… → carry \(result.carried.noteIDs.count) notes")
+    }
+
+    /// Puts the carried pile down where it is, and says whether there was
+    /// anything to put down.
+    ///
+    /// The single answer to a click while carrying, whatever the click landed
+    /// on. Every interaction on the canvas has to get this right, so there is
+    /// one of it.
+    ///
+    /// Down **where the pile is**, not at the pointer. The pile floats clear of
+    /// the pointer so you can see what you are aiming — and placing at the
+    /// pointer then slid it half a card up and left, away from the spot you had
+    /// just lined it up on. The preview is the aim.
+    @discardableResult
+    func placeCarriedAtCursor() -> Bool {
+        // Two overloads rather than a default argument: a default is evaluated
+        // outside the actor, and reading the modifier flags is main-actor work.
+        placeCarriedAtCursor(modifiers: InputModifiers.current())
+    }
+
+    @discardableResult
+    func placeCarriedAtCursor(modifiers: InputModifiers) -> Bool {
+        guard isCarrying else { return false }
+        stopEditing()
+        placeCarriedAt(world: bottomCenterFollowWorld(), modifiers: modifiers)
+        return true
     }
 
     func handleRightMouseDown(atRootPoint rootPoint: CGPoint) {
@@ -1213,6 +1383,7 @@ final class WhiteboardStore: ObservableObject {
         cancelFirstPickupLerp()
         let undoBefore = snapshot()
         guard let pickedRender = activeGroups.first(where: { $0.id == groupID }) else { return false }
+        clearSelection()
         let boardSnap = boardNoteGroups()
 
         if modifiers.option {
@@ -1323,7 +1494,7 @@ final class WhiteboardStore: ObservableObject {
         carriedGroup = session.undoBefore.carried
         carryAnchorFollowsCursor = true
         if var g = carriedGroup {
-            g.anchor = rootToWorld(bottomCenterFollowRoot())
+            g.anchor = bottomCenterFollowWorld()
             carriedGroup = g
         }
         let world = rootToWorld(cursorInRoot)
@@ -1376,7 +1547,7 @@ final class WhiteboardStore: ObservableObject {
             deleteNotes(s.deleteNoteIDsAfterApply)
         }
         if var g = carriedGroup {
-            g.anchor = rootToWorld(bottomCenterFollowRoot())
+            g.anchor = bottomCenterFollowWorld()
             carriedGroup = g
         }
     }
@@ -1409,10 +1580,31 @@ final class WhiteboardStore: ObservableObject {
         }
     }
 
-    private func bottomCenterFollowRoot() -> CGPoint {
-        CGPoint(
-            x: cursorInRoot.x + WhiteboardStyle.handFollowOffset.width,
-            y: cursorInRoot.y + WhiteboardStyle.handFollowOffset.height
+    /// Where the carried pile's bottom-centre sits, relative to the pointer.
+    ///
+    /// The offset is added in **world** space, after the conversion, not before
+    /// it. Added in root space it was a fixed number of screen points while the
+    /// cards themselves grew with the zoom — so the further you zoomed in, the
+    /// more of the pile sat under the pointer, until there was nothing left to
+    /// aim with. In world space the gap is a constant fraction of a card, which
+    /// is the thing you are actually aiming.
+    private func bottomCenterFollowWorld() -> CGPoint {
+        Self.carryAnchorWorld(cursorInRoot: cursorInRoot, pan: canvasPan, scale: canvasScale)
+    }
+
+    /// The same thing as a pure function, so the zoom behaviour can be tested
+    /// without staging a pickup.
+    static func carryAnchorWorld(
+        cursorInRoot: CGPoint, pan: CGSize, scale: CGFloat
+    ) -> CGPoint {
+        let safeScale = max(scale, 0.0001)
+        let cursorWorld = CGPoint(
+            x: (cursorInRoot.x - pan.width) / safeScale,
+            y: (cursorInRoot.y - pan.height) / safeScale
+        )
+        return CGPoint(
+            x: cursorWorld.x + WhiteboardStyle.handFollowOffset.width,
+            y: cursorWorld.y + WhiteboardStyle.handFollowOffset.height
         )
     }
 
@@ -1489,7 +1681,7 @@ final class WhiteboardStore: ObservableObject {
                         carriedGroup = res.remainingCarry
                         carryAnchorFollowsCursor = true
                         if var g = carriedGroup {
-                            g.anchor = rootToWorld(bottomCenterFollowRoot())
+                            g.anchor = bottomCenterFollowWorld()
                             carriedGroup = g
                         }
                     } else if let rest = res.remainingCarry {
@@ -1511,7 +1703,7 @@ final class WhiteboardStore: ObservableObject {
                     carriedGroup = res.remainingCarry
                     carryAnchorFollowsCursor = true
                     if var g = carriedGroup {
-                        g.anchor = rootToWorld(bottomCenterFollowRoot())
+                        g.anchor = bottomCenterFollowWorld()
                         carriedGroup = g
                     }
                 } else if let rest = res.remainingCarry {
@@ -1630,7 +1822,7 @@ final class WhiteboardStore: ObservableObject {
                     carriedGroup = res.remainingCarry
                     carryAnchorFollowsCursor = true
                     if var g = carriedGroup {
-                        g.anchor = rootToWorld(bottomCenterFollowRoot())
+                        g.anchor = bottomCenterFollowWorld()
                         carriedGroup = g
                     }
                 } else if let rest = res.remainingCarry {
@@ -1726,7 +1918,7 @@ final class WhiteboardStore: ObservableObject {
 
     private func createNoteAndEdit(centeredAt worldCenter: CGPoint) {
         if let noteID = persistence?.createNote(atWorldCenter: worldCenter, colour: noteColourPicked) {
-            editingNoteID = noteID
+            startEditing(note: noteID)
             appendActionLog("create note \(noteID.uuidString.prefix(8))…")
             finishOneShotTool()
         }

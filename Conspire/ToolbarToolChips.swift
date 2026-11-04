@@ -25,6 +25,14 @@ struct ToolSymbolPair {
     let filled: String
 
     static let hand = ToolSymbolPair(outline: "hand.raised", filled: "hand.raised.fill")
+    /// The hand with something in it. Picking notes up is the one thing the
+    /// hand does that has no other sign in the chrome — the pile follows the
+    /// pointer, so if you look away from it there is nothing to say you are
+    /// still holding anything.
+    static let handCarrying = ToolSymbolPair(
+        outline: "rectangle.and.hand.point.up.left",
+        filled: "rectangle.and.hand.point.up.left.fill"
+    )
     static let note = ToolSymbolPair(outline: "square", filled: "square.inset.filled")
     static let string = ToolSymbolPair(
         outline: "point.bottomleft.forward.to.point.topright.scurvepath",
@@ -51,11 +59,16 @@ private struct ToolChipContainer: ViewModifier {
 /// The hand: the resting state, so it leads the row and carries no colour.
 struct HandToolChip: View {
     let isActive: Bool
+    let isCarrying: Bool
     let activate: () -> Void
+
+    private var symbols: ToolSymbolPair {
+        isCarrying ? .handCarrying : .hand
+    }
 
     var body: some View {
         Button(action: activate) {
-            Image(systemName: ToolSymbolPair.hand.name(filled: isActive))
+            Image(systemName: symbols.name(filled: isActive))
                 .font(.system(size: WhiteboardStyle.toolbarSymbolSize, weight: .semibold))
                 .foregroundStyle(Color.primary)
                 .padding(.horizontal, 14)
@@ -65,7 +78,11 @@ struct HandToolChip: View {
         .buttonStyle(.plain)
         .contentShape(.capsule)
         .chromeChip(in: .capsule)
-        .help("Hand — move and adjust anything, create nothing (Esc)")
+        .help(
+            isCarrying
+                ? "Holding notes — click to put them down, Esc to drop them here"
+                : "Hand — move and adjust anything, create nothing (Esc)"
+        )
     }
 }
 

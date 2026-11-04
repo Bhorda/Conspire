@@ -77,7 +77,11 @@ enum WhiteboardStyle {
     /// dot count) steady when zoomed far out.
     static let dotGridMinScreenSpacing: CGFloat = 14
     static let dotGridColor = Color.primary.opacity(0.11)
-    /// In root space: bottom-center of the carried pile is placed this far down-right of the pointer so the card does not sit under the cursor and block hit-testing.
+    /// In **world** space: the bottom-centre of the carried pile sits this far
+    /// down-right of the pointer, so the cards never cover the point you are
+    /// aiming at. World rather than root, so the gap scales with the cards it
+    /// is holding clear of — a fixed screen offset vanished under them as soon
+    /// as you zoomed in.
     static let handFollowOffset = CGSize(
         width: noteSize.width / 2 + 36,
         height: noteSize.height / 2 + 36

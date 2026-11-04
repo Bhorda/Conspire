@@ -72,6 +72,10 @@ final class CanvasKeyboardCycleHostView: NSView {
                         store.deleteSelectedImage()
                     } else if store.selectedFieldID != nil {
                         store.deleteSelectedField()
+                    } else if store.selectedLinkID != nil {
+                        // A selected string was the one thing Backspace
+                        // ignored: it could only be deleted from its inspector.
+                        store.deleteSelectedLink()
                     } else if let noteID = store.selectedNoteID {
                         store.selectNote(nil)
                         store.deleteNote(noteID)

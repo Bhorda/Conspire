@@ -53,8 +53,7 @@ extension WhiteboardStore {
     }
 
     func selectImage(_ id: UUID?) {
-        selectedImageID = id
-        if id != nil { selectedNoteID = nil }
+        setSelection(image: id)
     }
 
     /// A click on an image, with where on the image it landed.
@@ -63,12 +62,15 @@ extension WhiteboardStore {
     /// it is threaded through: a string attaches to the point you clicked, not
     /// to the picture.
     func handleImageTap(_ id: UUID, atNormalised position: (u: CGFloat, v: CGFloat)) {
+        // A picture is no exception: carrying means the click places. The
+        // interaction layer also stands down while carrying, so this is the
+        // second lock on the same door — but the rule belongs here, not in a
+        // view's hit-testing.
+        if placeCarriedAtCursor() { return }
         if placementMode == .string {
             pinAndLink(imageID: id, u: position.u, v: position.v)
             return
         }
-        selectLink(nil)
-        selectField(nil)
         selectImage(id)
     }
 
@@ -139,14 +141,14 @@ extension WhiteboardStore {
             )
         )
         imageUndoBeforeGesture = imageUndoSnapshot()
-        selectedImageID = id
+        selectImage(id)
     }
 
     func beginImageResize(id: UUID) {
         guard let asset = image(withID: id) else { return }
         imageGesture = .resize(id: id, startRect: asset.worldRect)
         imageUndoBeforeGesture = imageUndoSnapshot()
-        selectedImageID = id
+        selectImage(id)
     }
 
     func updateImageGesture(atWorld point: CGPoint) {

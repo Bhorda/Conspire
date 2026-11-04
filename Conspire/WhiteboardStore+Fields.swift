@@ -215,7 +215,7 @@ extension WhiteboardStore {
             fields[index].ring = merged
             fields[index].updatedAt = Date()
             persistField(fields[index])
-            selectedFieldID = hostID
+            selectField(hostID)
             rebuildFieldMembership()
             registerFieldUndo(before, actionName: "Extend Field")
             appendActionLog("field extended")
@@ -230,7 +230,7 @@ extension WhiteboardStore {
         )
         fields.append(field)
         persistField(field)
-        selectedFieldID = field.id
+        selectField(field.id)
         rebuildFieldMembership()
         registerFieldUndo(before, actionName: "Draw Field")
         appendActionLog("field created")
@@ -286,7 +286,7 @@ extension WhiteboardStore {
         for field in fields.reversed() {
             guard let near = FieldGeometry.nearest(on: field.ring, to: world), near.distance <= grab
             else { continue }
-            selectedFieldID = field.id
+            selectField(field.id)
             switch fieldReshapeMode {
             case .clay:
                 let influence = FieldGeometry.arcInfluence(
@@ -316,7 +316,7 @@ extension WhiteboardStore {
 
         // Interior: select, and drag to move. ⌘ brings the notes inside along.
         guard let field = field(atWorld: world) else { return }
-        selectedFieldID = field.id
+        selectField(field.id)
         let carryNotes = InputModifiers.current().command
         let groupIDs = carryNotes ? memberGroupIDs(of: field) : []
         fieldMoveGroupIDs = groupIDs
@@ -442,13 +442,7 @@ extension WhiteboardStore {
     // MARK: - Selection
 
     func selectField(_ id: UUID?) {
-        selectedFieldID = id
-        // One selection at a time, so Delete and Escape always have an
-        // unambiguous target.
-        if id != nil {
-            selectedImageID = nil
-            selectedNoteID = nil
-        }
+        setSelection(field: id)
     }
 
     func setSelectedFieldLabel(_ label: String) {
